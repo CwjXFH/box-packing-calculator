@@ -23,6 +23,18 @@ interface PackingResult {
   orientation: [number, number, number];
   countPerDimension: [number, number, number];
   utilizationRate: number;
+  wastedSpace: [number, number, number];
+  optimalBigBox: [number, number, number];
+  allOrientations: OrientationResult[];
+}
+
+interface OrientationResult {
+  orientation: [number, number, number];
+  count: number;
+  countPerDimension: [number, number, number];
+  utilizationRate: number;
+  wastedSpace: [number, number, number];
+  optimalBigBox: [number, number, number];
 }
 
 export default function Home() {
@@ -49,9 +61,12 @@ export default function Home() {
     setTimeout(() => {
       const bigBoxDims = [bigBox.length, bigBox.width, bigBox.height];
       const smallBoxDims = [smallBox.length, smallBox.width, smallBox.height];
+      const smallBoxVolume = smallBox.length * smallBox.width * smallBox.height;
+      const bigBoxVolume = bigBox.length * bigBox.width * bigBox.height;
 
       let maxCount = 0;
       let bestArrangement: PackingResult | null = null;
+      const allOrientations: OrientationResult[] = [];
 
       // 尝试所有可能的旋转方向
       const permutations = [
@@ -76,24 +91,70 @@ export default function Home() {
 
         const total = countX * countY * countZ;
 
+        // 计算实际使用的空间和浪费的空间
+        const usedX = countX * smallOrientation[0];
+        const usedY = countY * smallOrientation[1];
+        const usedZ = countZ * smallOrientation[2];
+
+        const wasteX = bigBoxDims[0] - usedX;
+        const wasteY = bigBoxDims[1] - usedY;
+        const wasteZ = bigBoxDims[2] - usedZ;
+
+        const utilizationRate = (total * smallBoxVolume / bigBoxVolume) * 100;
+
+        // 最优大箱子尺寸（100%利用率）
+        const optimalBigBox: [number, number, number] = [usedX, usedY, usedZ];
+
+        const orientationResult: OrientationResult = {
+          orientation: smallOrientation,
+          count: total,
+          countPerDimension: [countX, countY, countZ],
+          utilizationRate: parseFloat(utilizationRate.toFixed(2)),
+          wastedSpace: [
+            parseFloat(wasteX.toFixed(1)),
+            parseFloat(wasteY.toFixed(1)),
+            parseFloat(wasteZ.toFixed(1)),
+          ],
+          optimalBigBox,
+        };
+
+        allOrientations.push(orientationResult);
+
         if (total > maxCount) {
           maxCount = total;
-          const smallBoxVolume = smallBox.length * smallBox.width * smallBox.height;
-          const bigBoxVolume = bigBox.length * bigBox.width * bigBox.height;
-          const utilizationRate = (total * smallBoxVolume / bigBoxVolume) * 100;
-
           bestArrangement = {
             maxCount: total,
             orientation: smallOrientation,
             countPerDimension: [countX, countY, countZ],
             utilizationRate: parseFloat(utilizationRate.toFixed(2)),
+            wastedSpace: [
+              parseFloat(wasteX.toFixed(1)),
+              parseFloat(wasteY.toFixed(1)),
+              parseFloat(wasteZ.toFixed(1)),
+            ],
+            optimalBigBox,
+            allOrientations: allOrientations.sort((a, b) => b.count - a.count),
           };
         }
+      }
+
+      if (bestArrangement) {
+        bestArrangement.allOrientations = allOrientations.sort((a, b) => b.count - a.count);
       }
 
       setResult(bestArrangement);
       setIsCalculating(false);
     }, 600);
+  };
+
+  const applyOptimalSize = () => {
+    if (result) {
+      setBigBox({
+        length: result.optimalBigBox[0],
+        width: result.optimalBigBox[1],
+        height: result.optimalBigBox[2],
+      });
+    }
   };
 
   return (
@@ -243,55 +304,146 @@ export default function Home() {
 
           {/* Results */}
           {result && (
-            <Card className="p-10 bg-card border-2 border-primary neon-glow animate-fade-in">
-              <div className="flex flex-col md:flex-row items-center gap-12">
-                {/* Visual */}
-                <div className="flex-shrink-0">
-                  <img
-                    src="/images/calculation-visual.png"
-                    alt="装箱可视化"
-                    className="w-64 h-64 object-contain"
-                  />
-                </div>
-
-                {/* Results Data */}
-                <div className="flex-1 space-y-8">
-                  <div>
-                    <h3 className="text-2xl font-bold text-gray-400 mb-2">计算结果</h3>
-                    <div className="flex items-baseline gap-4">
-                      <span className="text-8xl font-black number-display text-primary">
-                        {result.maxCount}
-                      </span>
-                      <span className="text-3xl text-gray-400 font-medium">个</span>
-                    </div>
+            <>
+              <Card className="p-10 bg-card border-2 border-primary neon-glow animate-fade-in mb-8">
+                <div className="flex flex-col md:flex-row items-center gap-12">
+                  {/* Visual */}
+                  <div className="flex-shrink-0">
+                    <img
+                      src="/images/calculation-visual.png"
+                      alt="装箱可视化"
+                      className="w-64 h-64 object-contain"
+                    />
                   </div>
 
-                  <div className="grid grid-cols-2 gap-6">
+                  {/* Results Data */}
+                  <div className="flex-1 space-y-8">
                     <div>
-                      <p className="text-sm text-gray-500 mb-1 font-medium">最佳摆放方向</p>
-                      <p className="text-xl font-mono text-foreground">
-                        {result.orientation[0]} × {result.orientation[1]} × {result.orientation[2]}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-500 mb-1 font-medium">各方向数量</p>
-                      <p className="text-xl font-mono text-foreground">
-                        {result.countPerDimension[0]} × {result.countPerDimension[1]} ×{" "}
-                        {result.countPerDimension[2]}
-                      </p>
-                    </div>
-                    <div className="col-span-2">
-                      <p className="text-sm text-gray-500 mb-1 font-medium">空间利用率</p>
-                      <div className="flex items-baseline gap-2">
-                        <span className="text-4xl font-bold text-destructive number-display">
-                          {result.utilizationRate}%
+                      <h3 className="text-2xl font-bold text-gray-400 mb-2">最优方案</h3>
+                      <div className="flex items-baseline gap-4">
+                        <span className="text-8xl font-black number-display text-primary">
+                          {result.maxCount}
                         </span>
+                        <span className="text-3xl text-gray-400 font-medium">个</span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-6">
+                      <div>
+                        <p className="text-sm text-gray-500 mb-1 font-medium">最佳摆放方向</p>
+                        <p className="text-xl font-mono text-foreground">
+                          {result.orientation[0]} × {result.orientation[1]} × {result.orientation[2]}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-500 mb-1 font-medium">各方向数量</p>
+                        <p className="text-xl font-mono text-foreground">
+                          {result.countPerDimension[0]} × {result.countPerDimension[1]} ×{" "}
+                          {result.countPerDimension[2]}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-500 mb-1 font-medium">空间利用率</p>
+                        <div className="flex items-baseline gap-2">
+                          <span className="text-4xl font-bold text-destructive number-display">
+                            {result.utilizationRate}%
+                          </span>
+                        </div>
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-500 mb-1 font-medium">浪费空间</p>
+                        <p className="text-xl font-mono text-gray-400">
+                          {result.wastedSpace[0]} × {result.wastedSpace[1]} × {result.wastedSpace[2]}
+                        </p>
                       </div>
                     </div>
                   </div>
                 </div>
-              </div>
-            </Card>
+              </Card>
+
+              {/* Optimization Suggestion */}
+              {result.utilizationRate < 100 && (
+                <Card className="p-8 bg-card border-2 border-destructive/50 animate-fade-in mb-8">
+                  <div className="flex items-start gap-6">
+                    <img
+                      src="/images/result-icon.png"
+                      alt="优化建议"
+                      className="w-20 h-20 object-contain flex-shrink-0"
+                    />
+                    <div className="flex-1">
+                      <h3 className="text-2xl font-bold text-destructive mb-4">空间优化建议</h3>
+                      <p className="text-lg text-gray-300 mb-4 leading-relaxed">
+                        当前配置下，小箱子保持 <span className="font-mono text-primary">{result.orientation[0]} × {result.orientation[1]} × {result.orientation[2]}</span> 方向摆放时，
+                        大箱子存在 <span className="font-mono text-destructive">{result.wastedSpace[0]} × {result.wastedSpace[1]} × {result.wastedSpace[2]} cm</span> 的浪费空间。
+                      </p>
+                      <div className="bg-secondary/50 p-6 rounded mb-4">
+                        <p className="text-base text-gray-400 mb-2">如果调整大箱子尺寸为：</p>
+                        <p className="text-3xl font-mono font-bold text-primary mb-3">
+                          {result.optimalBigBox[0]} × {result.optimalBigBox[1]} × {result.optimalBigBox[2]} cm
+                        </p>
+                        <p className="text-base text-gray-300">
+                          可实现 <span className="text-2xl font-bold text-destructive">100%</span> 空间利用率，装载相同的 <span className="font-bold">{result.maxCount}</span> 个小箱子
+                        </p>
+                      </div>
+                      <Button
+                        onClick={applyOptimalSize}
+                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90 neon-glow-pink"
+                      >
+                        应用优化尺寸
+                      </Button>
+                    </div>
+                  </div>
+                </Card>
+              )}
+
+              {/* All Orientations */}
+              <Card className="p-8 bg-card border-2 border-border animate-fade-in">
+                <h3 className="text-2xl font-bold text-foreground mb-6">所有摆放方向对比</h3>
+                <div className="space-y-4">
+                  {result.allOrientations.map((item, index) => (
+                    <div
+                      key={index}
+                      className={`p-6 rounded border-2 transition-all ${
+                        item.orientation[0] === result.orientation[0] &&
+                        item.orientation[1] === result.orientation[1] &&
+                        item.orientation[2] === result.orientation[2]
+                          ? "border-primary bg-primary/5"
+                          : "border-border bg-secondary/30"
+                      }`}
+                    >
+                      <div className="grid md:grid-cols-5 gap-4 items-center">
+                        <div>
+                          <p className="text-xs text-gray-500 mb-1">摆放方向</p>
+                          <p className="text-lg font-mono font-bold text-foreground">
+                            {item.orientation[0]} × {item.orientation[1]} × {item.orientation[2]}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-gray-500 mb-1">装载数量</p>
+                          <p className="text-2xl font-bold text-primary">{item.count} 个</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-gray-500 mb-1">各方向数量</p>
+                          <p className="text-sm font-mono text-gray-300">
+                            {item.countPerDimension[0]} × {item.countPerDimension[1]} × {item.countPerDimension[2]}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-gray-500 mb-1">利用率</p>
+                          <p className="text-xl font-bold text-destructive">{item.utilizationRate}%</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-gray-500 mb-1">优化尺寸</p>
+                          <p className="text-sm font-mono text-gray-400">
+                            {item.optimalBigBox[0]} × {item.optimalBigBox[1]} × {item.optimalBigBox[2]}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            </>
           )}
         </div>
       </section>
