@@ -173,9 +173,9 @@ function greedyPackMixedOrientation(
 
 export default function Home() {
   const [bigBox, setBigBox] = useState<BoxDimensions>({
-    length: 58,
-    width: 38,
-    height: 48,
+    length: 60,
+    width: 40,
+    height: 50,
   });
 
   const [smallBox, setSmallBox] = useState<BoxDimensions>({
@@ -184,19 +184,35 @@ export default function Home() {
     height: 4,
   });
 
+  const [boxThickness, setBoxThickness] = useState(1.5);
+  const [bigBoxWeight, setBigBoxWeight] = useState(500);
+  const [smallBoxWeight, setSmallBoxWeight] = useState(100);
+
   const [useMixedOrientation, setUseMixedOrientation] = useState(true);
   const [result, setResult] = useState<PackingResult | null>(null);
   const [mixedResult, setMixedResult] = useState<MixedPackingResult | null>(null);
   const [isCalculating, setIsCalculating] = useState(false);
 
+  // 计算内径
+  const getInnerDimensions = (outer: BoxDimensions): BoxDimensions => {
+    return {
+      length: Math.max(0, outer.length - boxThickness * 2),
+      width: Math.max(0, outer.width - boxThickness * 2),
+      height: Math.max(0, outer.height - boxThickness * 2),
+    };
+  };
+
+  const innerBigBox = getInnerDimensions(bigBox);
+
   const calculatePacking = () => {
     setIsCalculating(true);
 
     setTimeout(() => {
-      const bigBoxDims = [bigBox.length, bigBox.width, bigBox.height];
+      // 使用内径进行计算
+      const bigBoxDims = [innerBigBox.length, innerBigBox.width, innerBigBox.height];
       const smallBoxDims = [smallBox.length, smallBox.width, smallBox.height];
       const smallBoxVolume = smallBox.length * smallBox.width * smallBox.height;
-      const bigBoxVolume = bigBox.length * bigBox.width * bigBox.height;
+      const bigBoxVolume = innerBigBox.length * innerBigBox.width * innerBigBox.height;
 
       if (useMixedOrientation) {
         // 混合方向装箱
@@ -307,13 +323,19 @@ export default function Home() {
 
   const applyOptimalSize = () => {
     if (result) {
+      // 优化尺寸是内径，需要转换为外径
       setBigBox({
-        length: result.optimalBigBox[0],
-        width: result.optimalBigBox[1],
-        height: result.optimalBigBox[2],
+        length: result.optimalBigBox[0] + boxThickness * 2,
+        width: result.optimalBigBox[1] + boxThickness * 2,
+        height: result.optimalBigBox[2] + boxThickness * 2,
       });
     }
   };
+
+  // 计算重量
+  const totalCount = mixedResult?.totalCount || result?.maxCount || 0;
+  const actualWeight = bigBoxWeight + totalCount * smallBoxWeight;
+  const volumeWeight = (bigBox.length * bigBox.width * bigBox.height) / 6000;
 
   return (
     <div className="min-h-screen grid-bg">
@@ -321,7 +343,7 @@ export default function Home() {
       <section className="relative min-h-[60vh] flex items-center justify-center overflow-hidden">
         <div
           className="absolute inset-0 bg-cover bg-center opacity-40"
-          style={{ backgroundImage: "url(/images/hero-background.png)" }}
+          style={{ backgroundImage: "url(https://files.manuscdn.com/user_upload_by_module/session_file/310519663324726231/vdZWPKglVRkPrJtb.png)" }}
         />
         <div className="absolute inset-0 scan-line" />
         <div className="relative z-10 text-center px-4">
@@ -364,10 +386,33 @@ export default function Home() {
             </div>
           </Card>
 
+          {/* Box Thickness Setting */}
+          <Card className="p-6 mb-8 bg-card border-2 border-border">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-bold text-foreground mb-1">箱体厚度误差</h3>
+                <p className="text-sm text-gray-400">
+                  大箱子内外径误差，用于计算实际可用内部空间
+                </p>
+              </div>
+              <div className="flex items-center gap-3">
+                <Input
+                  type="number"
+                  value={boxThickness}
+                  onChange={(e) => setBoxThickness(parseFloat(e.target.value) || 0)}
+                  onFocus={(e) => e.target.select()}
+                  className="w-24 text-lg h-12 bg-input border-border focus:border-primary text-center"
+                  step="0.1"
+                />
+                <span className="text-base text-gray-400">cm</span>
+              </div>
+            </div>
+          </Card>
+
           <div className="grid md:grid-cols-2 gap-8 mb-12">
             {/* Big Box Input */}
             <Card className="p-8 bg-card border-2 border-primary/30 hover:border-primary transition-all scan-line">
-              <h2 className="text-3xl font-bold mb-6 text-primary">大箱子尺寸</h2>
+              <h2 className="text-3xl font-bold mb-6 text-primary">大箱子尺寸（外径）</h2>
               <div className="space-y-6">
                 <div>
                   <Label htmlFor="big-length" className="text-base font-medium text-gray-300">
@@ -380,9 +425,13 @@ export default function Home() {
                     onChange={(e) =>
                       setBigBox({ ...bigBox, length: parseFloat(e.target.value) || 0 })
                     }
+                    onFocus={(e) => e.target.select()}
                     className="mt-2 text-2xl h-14 bg-input border-border focus:border-primary"
                     step="0.1"
                   />
+                  <p className="text-sm text-gray-500 mt-1">
+                    内径: {innerBigBox.length.toFixed(1)} cm
+                  </p>
                 </div>
                 <div>
                   <Label htmlFor="big-width" className="text-base font-medium text-gray-300">
@@ -395,9 +444,13 @@ export default function Home() {
                     onChange={(e) =>
                       setBigBox({ ...bigBox, width: parseFloat(e.target.value) || 0 })
                     }
+                    onFocus={(e) => e.target.select()}
                     className="mt-2 text-2xl h-14 bg-input border-border focus:border-primary"
                     step="0.1"
                   />
+                  <p className="text-sm text-gray-500 mt-1">
+                    内径: {innerBigBox.width.toFixed(1)} cm
+                  </p>
                 </div>
                 <div>
                   <Label htmlFor="big-height" className="text-base font-medium text-gray-300">
@@ -410,8 +463,26 @@ export default function Home() {
                     onChange={(e) =>
                       setBigBox({ ...bigBox, height: parseFloat(e.target.value) || 0 })
                     }
+                    onFocus={(e) => e.target.select()}
                     className="mt-2 text-2xl h-14 bg-input border-border focus:border-primary"
                     step="0.1"
+                  />
+                  <p className="text-sm text-gray-500 mt-1">
+                    内径: {innerBigBox.height.toFixed(1)} cm
+                  </p>
+                </div>
+                <div>
+                  <Label htmlFor="big-weight" className="text-base font-medium text-gray-300">
+                    单个大箱子重量 (g)
+                  </Label>
+                  <Input
+                    id="big-weight"
+                    type="number"
+                    value={bigBoxWeight}
+                    onChange={(e) => setBigBoxWeight(parseFloat(e.target.value) || 0)}
+                    onFocus={(e) => e.target.select()}
+                    className="mt-2 text-2xl h-14 bg-input border-border focus:border-primary"
+                    step="1"
                   />
                 </div>
               </div>
@@ -419,7 +490,7 @@ export default function Home() {
 
             {/* Small Box Input */}
             <Card className="p-8 bg-card border-2 border-destructive/30 hover:border-destructive transition-all scan-line">
-              <h2 className="text-3xl font-bold mb-6 text-destructive">小箱子尺寸</h2>
+              <h2 className="text-3xl font-bold mb-6 text-destructive">小箱子尺寸（外径）</h2>
               <div className="space-y-6">
                 <div>
                   <Label htmlFor="small-length" className="text-base font-medium text-gray-300">
@@ -432,6 +503,7 @@ export default function Home() {
                     onChange={(e) =>
                       setSmallBox({ ...smallBox, length: parseFloat(e.target.value) || 0 })
                     }
+                    onFocus={(e) => e.target.select()}
                     className="mt-2 text-2xl h-14 bg-input border-border focus:border-destructive"
                     step="0.1"
                   />
@@ -447,6 +519,7 @@ export default function Home() {
                     onChange={(e) =>
                       setSmallBox({ ...smallBox, width: parseFloat(e.target.value) || 0 })
                     }
+                    onFocus={(e) => e.target.select()}
                     className="mt-2 text-2xl h-14 bg-input border-border focus:border-destructive"
                     step="0.1"
                   />
@@ -462,8 +535,23 @@ export default function Home() {
                     onChange={(e) =>
                       setSmallBox({ ...smallBox, height: parseFloat(e.target.value) || 0 })
                     }
+                    onFocus={(e) => e.target.select()}
                     className="mt-2 text-2xl h-14 bg-input border-border focus:border-destructive"
                     step="0.1"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="small-weight" className="text-base font-medium text-gray-300">
+                    单个小箱子重量 (g)
+                  </Label>
+                  <Input
+                    id="small-weight"
+                    type="number"
+                    value={smallBoxWeight}
+                    onChange={(e) => setSmallBoxWeight(parseFloat(e.target.value) || 0)}
+                    onFocus={(e) => e.target.select()}
+                    className="mt-2 text-2xl h-14 bg-input border-border focus:border-destructive"
+                    step="1"
                   />
                 </div>
               </div>
@@ -489,7 +577,7 @@ export default function Home() {
                 <div className="flex flex-col md:flex-row items-center gap-12">
                   <div className="flex-shrink-0">
                     <img
-                      src="/images/calculation-visual.png"
+                      src="https://files.manuscdn.com/user_upload_by_module/session_file/310519663324726231/OvseQEpWpEzoKRqk.png"
                       alt="装箱可视化"
                       className="w-64 h-64 object-contain"
                     />
@@ -523,6 +611,47 @@ export default function Home() {
                       </div>
                     </div>
                   </div>
+                </div>
+              </Card>
+
+              {/* Weight Information */}
+              <Card className="p-8 bg-card border-2 border-border animate-fade-in mb-8">
+                <h3 className="text-2xl font-bold text-foreground mb-6">重量信息</h3>
+                <div className="grid md:grid-cols-2 gap-8">
+                  <div className="p-6 rounded border-2 border-primary/30 bg-secondary/30">
+                    <p className="text-sm text-gray-500 mb-2">实际总重量</p>
+                    <div className="flex items-baseline gap-3">
+                      <span className="text-5xl font-bold text-primary number-display">
+                        {actualWeight.toFixed(0)}
+                      </span>
+                      <span className="text-xl text-gray-400">g</span>
+                    </div>
+                    <p className="text-sm text-gray-500 mt-3">
+                      = 大箱子 {bigBoxWeight}g + 小箱子 {smallBoxWeight}g × {mixedResult.totalCount}
+                    </p>
+                  </div>
+                  <div className="p-6 rounded border-2 border-destructive/30 bg-secondary/30">
+                    <p className="text-sm text-gray-500 mb-2">体积重</p>
+                    <div className="flex items-baseline gap-3">
+                      <span className="text-5xl font-bold text-destructive number-display">
+                        {volumeWeight.toFixed(0)}
+                      </span>
+                      <span className="text-xl text-gray-400">g</span>
+                    </div>
+                    <p className="text-sm text-gray-500 mt-3">
+                      = {bigBox.length} × {bigBox.width} × {bigBox.height} ÷ 6000
+                    </p>
+                  </div>
+                </div>
+                <div className="mt-6 p-6 rounded border-2 border-border bg-accent/20">
+                  <p className="text-base text-gray-300">
+                    <span className="font-bold text-foreground">计费重量：</span>
+                    取实际重量和体积重中的较大值 ={" "}
+                    <span className="text-2xl font-bold text-primary">
+                      {Math.max(actualWeight, volumeWeight).toFixed(0)}
+                    </span>{" "}
+                    g
+                  </p>
                 </div>
               </Card>
 
@@ -599,7 +728,7 @@ export default function Home() {
                 <div className="flex flex-col md:flex-row items-center gap-12">
                   <div className="flex-shrink-0">
                     <img
-                      src="/images/calculation-visual.png"
+                      src="https://files.manuscdn.com/user_upload_by_module/session_file/310519663324726231/OvseQEpWpEzoKRqk.png"
                       alt="装箱可视化"
                       className="w-64 h-64 object-contain"
                     />
@@ -651,11 +780,52 @@ export default function Home() {
                 </div>
               </Card>
 
+              {/* Weight Information */}
+              <Card className="p-8 bg-card border-2 border-border animate-fade-in mb-8">
+                <h3 className="text-2xl font-bold text-foreground mb-6">重量信息</h3>
+                <div className="grid md:grid-cols-2 gap-8">
+                  <div className="p-6 rounded border-2 border-primary/30 bg-secondary/30">
+                    <p className="text-sm text-gray-500 mb-2">实际总重量</p>
+                    <div className="flex items-baseline gap-3">
+                      <span className="text-5xl font-bold text-primary number-display">
+                        {actualWeight.toFixed(0)}
+                      </span>
+                      <span className="text-xl text-gray-400">g</span>
+                    </div>
+                    <p className="text-sm text-gray-500 mt-3">
+                      = 大箱子 {bigBoxWeight}g + 小箱子 {smallBoxWeight}g × {result.maxCount}
+                    </p>
+                  </div>
+                  <div className="p-6 rounded border-2 border-destructive/30 bg-secondary/30">
+                    <p className="text-sm text-gray-500 mb-2">体积重</p>
+                    <div className="flex items-baseline gap-3">
+                      <span className="text-5xl font-bold text-destructive number-display">
+                        {volumeWeight.toFixed(0)}
+                      </span>
+                      <span className="text-xl text-gray-400">g</span>
+                    </div>
+                    <p className="text-sm text-gray-500 mt-3">
+                      = {bigBox.length} × {bigBox.width} × {bigBox.height} ÷ 6000
+                    </p>
+                  </div>
+                </div>
+                <div className="mt-6 p-6 rounded border-2 border-border bg-accent/20">
+                  <p className="text-base text-gray-300">
+                    <span className="font-bold text-foreground">计费重量：</span>
+                    取实际重量和体积重中的较大值 ={" "}
+                    <span className="text-2xl font-bold text-primary">
+                      {Math.max(actualWeight, volumeWeight).toFixed(0)}
+                    </span>{" "}
+                    g
+                  </p>
+                </div>
+              </Card>
+
               {result.utilizationRate < 100 && (
                 <Card className="p-8 bg-card border-2 border-destructive/50 animate-fade-in mb-8">
                   <div className="flex items-start gap-6">
                     <img
-                      src="/images/result-icon.png"
+                      src="https://files.manuscdn.com/user_upload_by_module/session_file/310519663324726231/pCBkiEJLvBCZWCYT.png"
                       alt="优化建议"
                       className="w-20 h-20 object-contain flex-shrink-0"
                     />
@@ -666,7 +836,7 @@ export default function Home() {
                         <span className="font-mono text-primary">
                           {result.orientation[0]} × {result.orientation[1]} × {result.orientation[2]}
                         </span>{" "}
-                        方向摆放时， 大箱子存在{" "}
+                        方向摆放时， 大箱子内径存在{" "}
                         <span className="font-mono text-destructive">
                           {result.wastedSpace[0]} × {result.wastedSpace[1]} × {result.wastedSpace[2]}{" "}
                           cm
@@ -674,10 +844,16 @@ export default function Home() {
                         的浪费空间。
                       </p>
                       <div className="bg-secondary/50 p-6 rounded mb-4">
-                        <p className="text-base text-gray-400 mb-2">如果调整大箱子尺寸为：</p>
+                        <p className="text-base text-gray-400 mb-2">如果调整大箱子内径为：</p>
                         <p className="text-3xl font-mono font-bold text-primary mb-3">
                           {result.optimalBigBox[0]} × {result.optimalBigBox[1]} ×{" "}
                           {result.optimalBigBox[2]} cm
+                        </p>
+                        <p className="text-base text-gray-400 mb-2">对应外径为：</p>
+                        <p className="text-2xl font-mono font-bold text-destructive mb-3">
+                          {(result.optimalBigBox[0] + boxThickness * 2).toFixed(1)} ×{" "}
+                          {(result.optimalBigBox[1] + boxThickness * 2).toFixed(1)} ×{" "}
+                          {(result.optimalBigBox[2] + boxThickness * 2).toFixed(1)} cm
                         </p>
                         <p className="text-base text-gray-300">
                           可实现{" "}
@@ -736,7 +912,7 @@ export default function Home() {
                           </p>
                         </div>
                         <div>
-                          <p className="text-xs text-gray-500 mb-1">优化尺寸</p>
+                          <p className="text-xs text-gray-500 mb-1">优化内径</p>
                           <p className="text-sm font-mono text-gray-400">
                             {item.optimalBigBox[0]} × {item.optimalBigBox[1]} ×{" "}
                             {item.optimalBigBox[2]}
