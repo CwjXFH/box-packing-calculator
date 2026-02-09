@@ -2,10 +2,12 @@
  * 3D Packing Visualization Component
  * Uses Three.js to render the actual packing result in 3D
  * Optimized for better visual clarity and readability
+ * With interactive controls (drag to rotate, scroll to zoom, double-click to reset)
  */
 
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
+import { OrbitControls } from "three-stdlib";
 
 interface PlacedBox {
   position: [number, number, number];
@@ -28,6 +30,7 @@ export default function PackingVisualization3D({
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const controlsRef = useRef<OrbitControls | null>(null);
   const animationIdRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -39,6 +42,9 @@ export default function PackingVisualization3D({
     }
     if (animationIdRef.current) {
       cancelAnimationFrame(animationIdRef.current);
+    }
+    if (controlsRef.current) {
+      controlsRef.current.dispose();
     }
 
     // 创建场景
@@ -53,7 +59,12 @@ export default function PackingVisualization3D({
     // 优化相机位置，获得更好的观察角度
     const maxDim = Math.max(...bigBoxSize);
     const cameraDistance = maxDim * 2.2;
-    camera.position.set(cameraDistance * 0.8, cameraDistance * 0.6, cameraDistance * 0.8);
+    const initialCameraPosition = new THREE.Vector3(
+      cameraDistance * 0.8, 
+      cameraDistance * 0.6, 
+      cameraDistance * 0.8
+    );
+    camera.position.copy(initialCameraPosition);
     camera.lookAt(0, bigBoxSize[2] * 0.1, 0); // 稍微向上看
     cameraRef.current = camera;
 
@@ -69,6 +80,24 @@ export default function PackingVisualization3D({
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     containerRef.current.appendChild(renderer.domElement);
     rendererRef.current = renderer;
+
+    // 创建交互控制器
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true; // 启用阻尼（惯性）
+    controls.dampingFactor = 0.05;
+    controls.screenSpacePanning = false;
+    controls.minDistance = maxDim * 0.8; // 最小缩放距离
+    controls.maxDistance = maxDim * 5; // 最大缩放距离
+    controls.maxPolarAngle = Math.PI / 2 + 0.3; // 限制垂直旋转角度，避免倒转
+    controls.target.set(0, bigBoxSize[2] * 0.1, 0); // 设置旋转中心
+    controlsRef.current = controls;
+
+    // 双击重置视角
+    renderer.domElement.addEventListener('dblclick', () => {
+      camera.position.copy(initialCameraPosition);
+      controls.target.set(0, bigBoxSize[2] * 0.1, 0);
+      controls.update();
+    });
 
     // 增强光照系统
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.8); // 提高环境光
@@ -198,13 +227,11 @@ export default function PackingVisualization3D({
     scene.add(axesHelper);
 
     // 动画循环
-    let rotation = 0;
     const animate = () => {
       animationIdRef.current = requestAnimationFrame(animate);
 
-      // 缓慢旋转整个场景
-      rotation += 0.002; // 稍微减慢旋转速度
-      scene.rotation.y = rotation;
+      // 更新控制器（启用阻尼时必须调用）
+      controls.update();
 
       renderer.render(scene, camera);
     };
@@ -232,6 +259,10 @@ export default function PackingVisualization3D({
       if (animationIdRef.current) {
         cancelAnimationFrame(animationIdRef.current);
       }
+
+      if (controlsRef.current) {
+        controlsRef.current.dispose();
+      }
       
       if (rendererRef.current && containerRef.current) {
         containerRef.current.removeChild(rendererRef.current.domElement);
@@ -253,12 +284,31 @@ export default function PackingVisualization3D({
   }, [bigBoxSize, placedBoxes, isMixedMode]);
 
   return (
-    <div
-      ref={containerRef}
-      className="w-full h-full min-h-[400px] rounded-lg overflow-hidden border-2 border-cyan-500/30"
-      style={{
-        background: "linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 100%)",
-      }}
-    />
+    <div className="relative w-full h-full min-h-[400px]">
+      <div
+        ref={containerRef}
+        className="w-full h-full rounded-lg overflow-hidden border-2 border-cyan-500/30 cursor-grab active:cursor-grabbing"
+        style={{
+          background: "linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 100%)",
+        }}
+      />
+      {/* 交互提示 */}
+      <div className="absolute top-3 left-3 bg-black/60 backdrop-blur-sm px-3 py-2 rounded-lg border border-cyan-500/30">
+        <div className="flex flex-col gap-1 text-xs text-cyan-300/90">
+          <div className="flex items-center gap-2">
+            <span className="text-cyan-400">🖱️</span>
+            <span>拖拽旋转视角</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-cyan-400">🔍</span>
+            <span>滚轮缩放场景</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-cyan-400">🔄</span>
+            <span>双击重置视角</span>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
