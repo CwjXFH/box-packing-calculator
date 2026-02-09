@@ -185,7 +185,7 @@ export default function Home() {
   });
 
   const [boxThickness, setBoxThickness] = useState(1.5);
-  const [bigBoxWeight, setBigBoxWeight] = useState(500);
+  const [bigBoxWeight, setBigBoxWeight] = useState(300);
   const [smallBoxWeight, setSmallBoxWeight] = useState(100);
 
   const [useMixedOrientation, setUseMixedOrientation] = useState(true);
@@ -332,10 +332,11 @@ export default function Home() {
     }
   };
 
-  // 计算重量
+  // 计算重量（换算为kg）
   const totalCount = mixedResult?.totalCount || result?.maxCount || 0;
-  const actualWeight = bigBoxWeight + totalCount * smallBoxWeight;
-  const volumeWeight = (bigBox.length * bigBox.width * bigBox.height) / 6000;
+  const actualWeightG = bigBoxWeight + totalCount * smallBoxWeight;
+  const actualWeightKg = actualWeightG / 1000;
+  const volumeWeightKg = (bigBox.length * bigBox.width * bigBox.height) / 6000;
 
   return (
     <div className="min-h-screen grid-bg">
@@ -622,21 +623,21 @@ export default function Home() {
                     <p className="text-sm text-gray-500 mb-2">实际总重量</p>
                     <div className="flex items-baseline gap-3">
                       <span className="text-5xl font-bold text-primary number-display">
-                        {actualWeight.toFixed(0)}
+                        {actualWeightKg.toFixed(2)}
                       </span>
-                      <span className="text-xl text-gray-400">g</span>
+                      <span className="text-xl text-gray-400">kg</span>
                     </div>
                     <p className="text-sm text-gray-500 mt-3">
-                      = 大箱子 {bigBoxWeight}g + 小箱子 {smallBoxWeight}g × {mixedResult.totalCount}
+                      = 大箱子 {bigBoxWeight}g + 小箱子 {smallBoxWeight}g × {mixedResult.totalCount} = {actualWeightG}g
                     </p>
                   </div>
                   <div className="p-6 rounded border-2 border-destructive/30 bg-secondary/30">
                     <p className="text-sm text-gray-500 mb-2">体积重</p>
                     <div className="flex items-baseline gap-3">
                       <span className="text-5xl font-bold text-destructive number-display">
-                        {volumeWeight.toFixed(0)}
+                        {volumeWeightKg.toFixed(2)}
                       </span>
-                      <span className="text-xl text-gray-400">g</span>
+                      <span className="text-xl text-gray-400">kg</span>
                     </div>
                     <p className="text-sm text-gray-500 mt-3">
                       = {bigBox.length} × {bigBox.width} × {bigBox.height} ÷ 6000
@@ -648,9 +649,9 @@ export default function Home() {
                     <span className="font-bold text-foreground">计费重量：</span>
                     取实际重量和体积重中的较大值 ={" "}
                     <span className="text-2xl font-bold text-primary">
-                      {Math.max(actualWeight, volumeWeight).toFixed(0)}
+                      {Math.max(actualWeightKg, volumeWeightKg).toFixed(2)}
                     </span>{" "}
-                    g
+                    kg
                   </p>
                 </div>
               </Card>
@@ -788,21 +789,21 @@ export default function Home() {
                     <p className="text-sm text-gray-500 mb-2">实际总重量</p>
                     <div className="flex items-baseline gap-3">
                       <span className="text-5xl font-bold text-primary number-display">
-                        {actualWeight.toFixed(0)}
+                        {actualWeightKg.toFixed(2)}
                       </span>
-                      <span className="text-xl text-gray-400">g</span>
+                      <span className="text-xl text-gray-400">kg</span>
                     </div>
                     <p className="text-sm text-gray-500 mt-3">
-                      = 大箱子 {bigBoxWeight}g + 小箱子 {smallBoxWeight}g × {result.maxCount}
+                      = 大箱子 {bigBoxWeight}g + 小箱子 {smallBoxWeight}g × {result.maxCount} = {actualWeightG}g
                     </p>
                   </div>
                   <div className="p-6 rounded border-2 border-destructive/30 bg-secondary/30">
                     <p className="text-sm text-gray-500 mb-2">体积重</p>
                     <div className="flex items-baseline gap-3">
                       <span className="text-5xl font-bold text-destructive number-display">
-                        {volumeWeight.toFixed(0)}
+                        {volumeWeightKg.toFixed(2)}
                       </span>
-                      <span className="text-xl text-gray-400">g</span>
+                      <span className="text-xl text-gray-400">kg</span>
                     </div>
                     <p className="text-sm text-gray-500 mt-3">
                       = {bigBox.length} × {bigBox.width} × {bigBox.height} ÷ 6000
@@ -814,9 +815,9 @@ export default function Home() {
                     <span className="font-bold text-foreground">计费重量：</span>
                     取实际重量和体积重中的较大值 ={" "}
                     <span className="text-2xl font-bold text-primary">
-                      {Math.max(actualWeight, volumeWeight).toFixed(0)}
+                      {Math.max(actualWeightKg, volumeWeightKg).toFixed(2)}
                     </span>{" "}
-                    g
+                    kg
                   </p>
                 </div>
               </Card>
