@@ -186,7 +186,7 @@ export default function Home() {
     height: 4,
   });
 
-  const [boxThickness, setBoxThickness] = useState(1.5);
+  const [boxThickness, setBoxThickness] = useState(0.5);
   const [bigBoxWeight, setBigBoxWeight] = useState(300);
   const [smallBoxWeight, setSmallBoxWeight] = useState(100);
   const [volumeWeightDivisor, setVolumeWeightDivisor] = useState(6000);
