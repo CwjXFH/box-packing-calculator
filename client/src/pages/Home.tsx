@@ -187,6 +187,7 @@ export default function Home() {
   const [boxThickness, setBoxThickness] = useState(1.5);
   const [bigBoxWeight, setBigBoxWeight] = useState(300);
   const [smallBoxWeight, setSmallBoxWeight] = useState(100);
+  const [volumeWeightDivisor, setVolumeWeightDivisor] = useState(6000);
 
   const [useMixedOrientation, setUseMixedOrientation] = useState(true);
   const [result, setResult] = useState<PackingResult | null>(null);
@@ -336,7 +337,7 @@ export default function Home() {
   const totalCount = mixedResult?.totalCount || result?.maxCount || 0;
   const actualWeightG = bigBoxWeight + totalCount * smallBoxWeight;
   const actualWeightKg = actualWeightG / 1000;
-  const volumeWeightKg = (bigBox.length * bigBox.width * bigBox.height) / 6000;
+  const volumeWeightKg = (bigBox.length * bigBox.width * bigBox.height) / volumeWeightDivisor;
 
   return (
     <div className="min-h-screen grid-bg">
@@ -406,6 +407,28 @@ export default function Home() {
                   step="0.1"
                 />
                 <span className="text-base text-gray-400">cm</span>
+              </div>
+            </div>
+          </Card>
+
+          {/* 体积重基准参数设置 */}
+          <Card className="p-6 bg-card border-2 border-border mb-8">
+            <div className="flex items-center justify-between">
+              <div className="flex-1">
+                <h3 className="text-xl font-bold text-foreground mb-2">体积重计算基准</h3>
+                <p className="text-sm text-gray-500">
+                  不同快递公司的体积重计算除数可能不同，常见值：6000（国内）、5000（国际）
+                </p>
+              </div>
+              <div className="flex items-center gap-3 ml-6">
+                <Input
+                  type="number"
+                  value={volumeWeightDivisor}
+                  onChange={(e) => setVolumeWeightDivisor(parseFloat(e.target.value) || 6000)}
+                  onFocus={(e) => e.target.select()}
+                  className="w-28 text-lg h-12 bg-input border-border focus:border-primary text-center"
+                  step="100"
+                />
               </div>
             </div>
           </Card>
@@ -640,7 +663,7 @@ export default function Home() {
                       <span className="text-xl text-gray-400">kg</span>
                     </div>
                     <p className="text-sm text-gray-500 mt-3">
-                      = {bigBox.length} × {bigBox.width} × {bigBox.height} ÷ 6000
+                      = {bigBox.length} × {bigBox.width} × {bigBox.height} ÷ {volumeWeightDivisor}
                     </p>
                   </div>
                 </div>
@@ -806,7 +829,7 @@ export default function Home() {
                       <span className="text-xl text-gray-400">kg</span>
                     </div>
                     <p className="text-sm text-gray-500 mt-3">
-                      = {bigBox.length} × {bigBox.width} × {bigBox.height} ÷ 6000
+                      = {bigBox.length} × {bigBox.width} × {bigBox.height} ÷ {volumeWeightDivisor}
                     </p>
                   </div>
                 </div>
