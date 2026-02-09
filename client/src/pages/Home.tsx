@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { useState } from "react";
+import PackingVisualization3D from "@/components/PackingVisualization3D";
 
 interface BoxDimensions {
   length: number;
@@ -33,6 +34,7 @@ interface PackingResult {
   wastedSpace: [number, number, number];
   optimalBigBox: [number, number, number];
   allOrientations: OrientationResult[];
+  placedBoxes: PlacedBox[]; // 添加用于3D可视化的摆放数据
 }
 
 interface MixedPackingResult {
@@ -294,6 +296,25 @@ export default function Home() {
 
           if (total > maxCount) {
             maxCount = total;
+            
+            // 生成单一方向摆放数据
+            const placedBoxes: PlacedBox[] = [];
+            for (let x = 0; x < countX; x++) {
+              for (let y = 0; y < countY; y++) {
+                for (let z = 0; z < countZ; z++) {
+                  placedBoxes.push({
+                    position: [
+                      x * smallOrientation[0],
+                      y * smallOrientation[1],
+                      z * smallOrientation[2],
+                    ],
+                    orientation: smallOrientation,
+                    size: smallOrientation,
+                  });
+                }
+              }
+            }
+            
             bestArrangement = {
               maxCount: total,
               orientation: smallOrientation,
@@ -306,6 +327,7 @@ export default function Home() {
               ],
               optimalBigBox,
               allOrientations: allOrientations.sort((a, b) => b.count - a.count),
+              placedBoxes: placedBoxes,
             };
           }
         }
@@ -599,11 +621,15 @@ export default function Home() {
             <>
               <Card className="p-10 bg-card border-2 border-primary neon-glow animate-fade-in mb-8">
                 <div className="flex flex-col md:flex-row items-center gap-12">
-                  <div className="flex-shrink-0">
-                    <img
-                      src="https://files.manuscdn.com/user_upload_by_module/session_file/310519663324726231/OvseQEpWpEzoKRqk.png"
-                      alt="装箱可视化"
-                      className="w-64 h-64 object-contain"
+                  <div className="flex-shrink-0 w-full md:w-96 h-96">
+                    <PackingVisualization3D
+                      bigBoxSize={[
+                        bigBox.length - boxThickness * 2,
+                        bigBox.width - boxThickness * 2,
+                        bigBox.height - boxThickness * 2,
+                      ]}
+                      placedBoxes={mixedResult.placedBoxes}
+                      isMixedMode={true}
                     />
                   </div>
 
@@ -750,11 +776,15 @@ export default function Home() {
             <>
               <Card className="p-10 bg-card border-2 border-primary neon-glow animate-fade-in mb-8">
                 <div className="flex flex-col md:flex-row items-center gap-12">
-                  <div className="flex-shrink-0">
-                    <img
-                      src="https://files.manuscdn.com/user_upload_by_module/session_file/310519663324726231/OvseQEpWpEzoKRqk.png"
-                      alt="装箱可视化"
-                      className="w-64 h-64 object-contain"
+                  <div className="flex-shrink-0 w-full md:w-96 h-96">
+                    <PackingVisualization3D
+                      bigBoxSize={[
+                        bigBox.length - boxThickness * 2,
+                        bigBox.width - boxThickness * 2,
+                        bigBox.height - boxThickness * 2,
+                      ]}
+                      placedBoxes={result.placedBoxes}
+                      isMixedMode={false}
                     />
                   </div>
 
