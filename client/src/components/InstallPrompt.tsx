@@ -6,6 +6,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { X, Download } from "lucide-react";
+import { trackPWAInstall, trackPWADismiss } from "@/lib/analytics";
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -43,6 +44,11 @@ export default function InstallPrompt() {
     const { outcome } = await deferredPrompt.userChoice;
 
     console.log(`User response to the install prompt: ${outcome}`);
+    
+    // Track install event
+    if (outcome === 'accepted') {
+      trackPWAInstall();
+    }
 
     // Clear the deferredPrompt
     setDeferredPrompt(null);
@@ -50,6 +56,9 @@ export default function InstallPrompt() {
   };
 
   const handleDismiss = () => {
+    // Track dismiss event
+    trackPWADismiss();
+    
     setShowPrompt(false);
     // Store dismissal in localStorage to not show again for a while
     localStorage.setItem('pwa-install-dismissed', Date.now().toString());

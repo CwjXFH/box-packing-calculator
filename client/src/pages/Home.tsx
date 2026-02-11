@@ -13,6 +13,13 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { useState } from "react";
 import PackingVisualization3D from "@/components/PackingVisualization3D";
+import {
+  trackCalculation,
+  trackModeToggle,
+  trackThicknessAdjustment,
+  trackDivisorAdjustment,
+  trackOptimizationApplied,
+} from "@/lib/analytics";
 
 interface BoxDimensions {
   length: number;
@@ -233,13 +240,27 @@ export default function Home() {
         const totalVolume = placedBoxes.length * smallBoxVolume;
         const utilization = (totalVolume / bigBoxVolume) * 100;
 
-        setMixedResult({
+        const mixedResultData = {
           totalCount: placedBoxes.length,
           placedBoxes: placedBoxes,
           utilizationRate: parseFloat(utilization.toFixed(2)),
           orientationStats: orientationStats,
-        });
+        };
+        setMixedResult(mixedResultData);
         setResult(null);
+        
+        // Track calculation event
+        const actualWeight = (bigBoxWeight + mixedResultData.totalCount * smallBoxWeight) / 1000;
+        const volumetricWeight = (bigBox.length * bigBox.width * bigBox.height) / volumeWeightDivisor;
+        trackCalculation({
+          mode: 'mixed',
+          bigBoxVolume: bigBoxVolume,
+          smallBoxVolume: smallBoxVolume,
+          boxCount: mixedResultData.totalCount,
+          utilization: mixedResultData.utilizationRate,
+          actualWeight: actualWeight,
+          volumetricWeight: volumetricWeight,
+        });
       } else {
         // 单一方向装箱
         let maxCount = 0;
@@ -338,6 +359,21 @@ export default function Home() {
 
         setResult(bestArrangement);
         setMixedResult(null);
+        
+        // Track calculation event
+        if (bestArrangement) {
+          const actualWeight = (bigBoxWeight + bestArrangement.maxCount * smallBoxWeight) / 1000;
+          const volumetricWeight = (bigBox.length * bigBox.width * bigBox.height) / volumeWeightDivisor;
+          trackCalculation({
+            mode: 'single',
+            bigBoxVolume: bigBoxVolume,
+            smallBoxVolume: smallBoxVolume,
+            boxCount: bestArrangement.maxCount,
+            utilization: bestArrangement.utilizationRate,
+            actualWeight: actualWeight,
+            volumetricWeight: volumetricWeight,
+          });
+        }
       }
 
       setIsCalculating(false);
@@ -346,6 +382,19 @@ export default function Home() {
 
   const applyOptimalSize = () => {
     if (result) {
+      const originalVolume = bigBox.length * bigBox.width * bigBox.height;
+      const optimizedVolume = (result.optimalBigBox[0] + boxThickness * 2) * 
+                              (result.optimalBigBox[1] + boxThickness * 2) * 
+                              (result.optimalBigBox[2] + boxThickness * 2);
+      const utilizationImprovement = 100 - result.utilizationRate;
+      
+      // Track optimization applied
+      trackOptimizationApplied({
+        originalVolume: originalVolume,
+        optimizedVolume: optimizedVolume,
+        utilizationImprovement: utilizationImprovement,
+      });
+      
       // 优化尺寸是内径，需要转换为外径
       setBigBox({
         length: result.optimalBigBox[0] + boxThickness * 2,
@@ -404,7 +453,10 @@ export default function Home() {
                 <Switch
                   id="algorithm-mode"
                   checked={useMixedOrientation}
-                  onCheckedChange={setUseMixedOrientation}
+                  onCheckedChange={(checked) => {
+                    setUseMixedOrientation(checked);
+                    trackModeToggle(checked ? 'mixed' : 'single');
+                  }}
                 />
               </div>
             </div>
@@ -423,7 +475,16 @@ export default function Home() {
                 <Input
                   type="number"
                   value={boxThickness}
-                  onChange={(e) => setBoxThickness(parseFloat(e.target.value) || 0)}
+                  onChange={(e) => {
+                    const newValue = parseFloat(e.target.value) || 0;
+                    setBoxThickness(newValue);
+                  }}
+                  onBlur={(e) => {
+                    const value = parseFloat(e.target.value) || 0;
+                    if (value !== boxThickness) {
+                      trackThicknessAdjustment(value);
+                    }
+                  }}
                   onFocus={(e) => e.target.select()}
                   className="w-24 text-lg h-12 bg-input border-border focus:border-primary text-center"
                   step="0.1"
@@ -446,7 +507,16 @@ export default function Home() {
                 <Input
                   type="number"
                   value={volumeWeightDivisor}
-                  onChange={(e) => setVolumeWeightDivisor(parseFloat(e.target.value) || 6000)}
+                  onChange={(e) => {
+                    const newValue = parseFloat(e.target.value) || 6000;
+                    setVolumeWeightDivisor(newValue);
+                  }}
+                  onBlur={(e) => {
+                    const value = parseFloat(e.target.value) || 6000;
+                    if (value !== volumeWeightDivisor) {
+                      trackDivisorAdjustment(value);
+                    }
+                  }}
                   onFocus={(e) => e.target.select()}
                   className="w-28 text-lg h-12 bg-input border-border focus:border-primary text-center"
                   step="100"
