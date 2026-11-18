@@ -1,1063 +1,619 @@
-/*
- * Design Philosophy: Futuristic Minimalism
- * - Central axis symmetry with large whitespace
- * - High contrast black background with white content
- * - Electric blue and neon pink accents for interactions
- * - Glowing borders and scan line effects
- */
-
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { useState } from "react";
-import PackingVisualization3D from "@/components/PackingVisualization3D";
+import PackingVisualization3D, {
+  MAX_RENDERED_BOXES,
+  ORIENTATION_COLORS,
+} from "@/components/PackingVisualization3D";
 import {
-  trackCalculation,
-  trackModeToggle,
-  trackThicknessAdjustment,
-  trackDivisorAdjustment,
-  trackOptimizationApplied,
-} from "@/lib/analytics";
+  DEFAULT_FORM,
+  type FieldName,
+  type FormValues,
+  type ParsedInput,
+  cm,
+  dims,
+  parseForm,
+} from "@/lib/form";
+import {
+  type Block,
+  type MixedResult,
+  type SingleResult,
+  type Vec3,
+  blockCount,
+  expandBlocks,
+  orientationStats,
+  packSingle,
+  singleToBlocks,
+} from "@/lib/packing";
+import { runPackMixed } from "@/lib/runPacking";
+import { type ReactNode, useCallback, useMemo, useState } from "react";
 
-interface BoxDimensions {
-  length: number;
-  width: number;
-  height: number;
+interface Calculation {
+  /** 计算时的表单内容，用于判断结果是否过期 */
+  formKey: string;
+  input: ParsedInput;
+  single: SingleResult;
+  mixed: MixedResult;
 }
 
-interface PlacedBox {
-  position: [number, number, number];
-  orientation: [number, number, number];
-  size: [number, number, number];
-}
-
-interface PackingResult {
-  maxCount: number;
-  orientation: [number, number, number];
-  countPerDimension: [number, number, number];
-  utilizationRate: number;
-  wastedSpace: [number, number, number];
-  optimalBigBox: [number, number, number];
-  allOrientations: OrientationResult[];
-  placedBoxes: PlacedBox[]; // 添加用于3D可视化的摆放数据
-}
-
-interface MixedPackingResult {
-  totalCount: number;
-  placedBoxes: PlacedBox[];
-  utilizationRate: number;
-  orientationStats: Record<string, number>;
-}
-
-interface OrientationResult {
-  orientation: [number, number, number];
-  count: number;
-  countPerDimension: [number, number, number];
-  utilizationRate: number;
-  wastedSpace: [number, number, number];
-  optimalBigBox: [number, number, number];
-}
-
-class Space3D {
-  constructor(
-    public x: number,
-    public y: number,
-    public z: number,
-    public w: number,
-    public h: number,
-    public d: number
-  ) {}
-
-  volume(): number {
-    return this.w * this.h * this.d;
-  }
-
-  canFit(boxDims: [number, number, number]): {
-    fits: boolean;
-    orientation: [number, number, number] | null;
-  } {
-    const permutations: [number, number, number][] = [
-      [boxDims[0], boxDims[1], boxDims[2]],
-      [boxDims[0], boxDims[2], boxDims[1]],
-      [boxDims[1], boxDims[0], boxDims[2]],
-      [boxDims[1], boxDims[2], boxDims[0]],
-      [boxDims[2], boxDims[0], boxDims[1]],
-      [boxDims[2], boxDims[1], boxDims[0]],
-    ];
-
-    for (const perm of permutations) {
-      if (perm[0] <= this.w && perm[1] <= this.h && perm[2] <= this.d) {
-        return { fits: true, orientation: perm };
-      }
-    }
-    return { fits: false, orientation: null };
-  }
-}
-
-function greedyPackMixedOrientation(
-  bigDims: [number, number, number],
-  smallDims: [number, number, number],
-  maxIterations: number = 1000
-): PlacedBox[] {
-  const freeSpaces: Space3D[] = [new Space3D(0, 0, 0, bigDims[0], bigDims[1], bigDims[2])];
-  const placedBoxes: PlacedBox[] = [];
-
-  let iteration = 0;
-  while (freeSpaces.length > 0 && iteration < maxIterations) {
-    iteration++;
-
-    // 按体积从大到小排序
-    freeSpaces.sort((a, b) => b.volume() - a.volume());
-
-    let placed = false;
-    for (let i = 0; i < freeSpaces.length; i++) {
-      const space = freeSpaces[i];
-      const { fits, orientation } = space.canFit(smallDims);
-
-      if (fits && orientation) {
-        placedBoxes.push({
-          position: [space.x, space.y, space.z],
-          orientation: orientation,
-          size: orientation,
-        });
-
-        freeSpaces.splice(i, 1);
-
-        // 沿X轴分割
-        if (space.w > orientation[0]) {
-          freeSpaces.push(
-            new Space3D(
-              space.x + orientation[0],
-              space.y,
-              space.z,
-              space.w - orientation[0],
-              space.h,
-              space.d
-            )
-          );
-        }
-
-        // 沿Y轴分割
-        if (space.h > orientation[1]) {
-          freeSpaces.push(
-            new Space3D(
-              space.x,
-              space.y + orientation[1],
-              space.z,
-              orientation[0],
-              space.h - orientation[1],
-              space.d
-            )
-          );
-        }
-
-        // 沿Z轴分割
-        if (space.d > orientation[2]) {
-          freeSpaces.push(
-            new Space3D(
-              space.x,
-              space.y,
-              space.z + orientation[2],
-              orientation[0],
-              orientation[1],
-              space.d - orientation[2]
-            )
-          );
-        }
-
-        placed = true;
-        break;
-      }
-    }
-
-    if (!placed) {
-      break;
-    }
-  }
-
-  return placedBoxes;
-}
+/** 方案明细最多列出多少个区域 */
+const MAX_LISTED_BLOCKS = 50;
 
 export default function Home() {
-  const [bigBox, setBigBox] = useState<BoxDimensions>({
-    length: 60,
-    width: 40,
-    height: 50,
-  });
+  const [form, setForm] = useState<FormValues>(DEFAULT_FORM);
+  const [showErrors, setShowErrors] = useState(false);
+  const [mixedMode, setMixedMode] = useState(true);
+  const [calc, setCalc] = useState<Calculation | null>(null);
+  const [calculating, setCalculating] = useState(false);
+  const [calcError, setCalcError] = useState<string | null>(null);
 
-  const [smallBox, setSmallBox] = useState<BoxDimensions>({
-    length: 32.5,
-    width: 23.5,
-    height: 4,
-  });
+  const { input, errors } = useMemo(() => parseForm(form), [form]);
+  const formKey = JSON.stringify(form);
+  const stale = calc !== null && calc.formKey !== formKey;
 
-  const [boxThickness, setBoxThickness] = useState(0.5);
-  const [bigBoxWeight, setBigBoxWeight] = useState(300);
-  const [smallBoxWeight, setSmallBoxWeight] = useState(100);
-  const [volumeWeightDivisor, setVolumeWeightDivisor] = useState(6000);
+  const setField = (name: FieldName, value: string) =>
+    setForm(f => ({ ...f, [name]: value }));
 
-  const [useMixedOrientation, setUseMixedOrientation] = useState(true);
-  const [result, setResult] = useState<PackingResult | null>(null);
-  const [mixedResult, setMixedResult] = useState<MixedPackingResult | null>(null);
-  const [isCalculating, setIsCalculating] = useState(false);
-
-  // 计算内径
-  const getInnerDimensions = (outer: BoxDimensions): BoxDimensions => {
-    return {
-      length: Math.max(0, outer.length - boxThickness * 2),
-      width: Math.max(0, outer.width - boxThickness * 2),
-      height: Math.max(0, outer.height - boxThickness * 2),
-    };
-  };
-
-  const innerBigBox = getInnerDimensions(bigBox);
-
-  const calculatePacking = () => {
-    setIsCalculating(true);
-
-    setTimeout(() => {
-      // 使用内径进行计算
-      const bigBoxDims = [innerBigBox.length, innerBigBox.width, innerBigBox.height];
-      const smallBoxDims = [smallBox.length, smallBox.width, smallBox.height];
-      const smallBoxVolume = smallBox.length * smallBox.width * smallBox.height;
-      const bigBoxVolume = innerBigBox.length * innerBigBox.width * innerBigBox.height;
-
-      if (useMixedOrientation) {
-        // 混合方向装箱
-        const placedBoxes = greedyPackMixedOrientation(
-          bigBoxDims as [number, number, number],
-          smallBoxDims as [number, number, number]
-        );
-
-        const orientationStats: Record<string, number> = {};
-        placedBoxes.forEach((box) => {
-          const key = `${box.orientation[0]} × ${box.orientation[1]} × ${box.orientation[2]}`;
-          orientationStats[key] = (orientationStats[key] || 0) + 1;
-        });
-
-        const totalVolume = placedBoxes.length * smallBoxVolume;
-        const utilization = (totalVolume / bigBoxVolume) * 100;
-
-        const mixedResultData = {
-          totalCount: placedBoxes.length,
-          placedBoxes: placedBoxes,
-          utilizationRate: parseFloat(utilization.toFixed(2)),
-          orientationStats: orientationStats,
-        };
-        setMixedResult(mixedResultData);
-        setResult(null);
-        
-        // Track calculation event
-        const actualWeight = (bigBoxWeight + mixedResultData.totalCount * smallBoxWeight) / 1000;
-        const volumetricWeight = (bigBox.length * bigBox.width * bigBox.height) / volumeWeightDivisor;
-        trackCalculation({
-          mode: 'mixed',
-          bigBoxVolume: bigBoxVolume,
-          smallBoxVolume: smallBoxVolume,
-          boxCount: mixedResultData.totalCount,
-          utilization: mixedResultData.utilizationRate,
-          actualWeight: actualWeight,
-          volumetricWeight: volumetricWeight,
-        });
-      } else {
-        // 单一方向装箱
-        let maxCount = 0;
-        let bestArrangement: PackingResult | null = null;
-        const allOrientations: OrientationResult[] = [];
-
-        const permutations = [
-          [0, 1, 2],
-          [0, 2, 1],
-          [1, 0, 2],
-          [1, 2, 0],
-          [2, 0, 1],
-          [2, 1, 0],
-        ];
-
-        for (const perm of permutations) {
-          const smallOrientation: [number, number, number] = [
-            smallBoxDims[perm[0]],
-            smallBoxDims[perm[1]],
-            smallBoxDims[perm[2]],
-          ];
-
-          const countX = Math.floor(bigBoxDims[0] / smallOrientation[0]);
-          const countY = Math.floor(bigBoxDims[1] / smallOrientation[1]);
-          const countZ = Math.floor(bigBoxDims[2] / smallOrientation[2]);
-
-          const total = countX * countY * countZ;
-
-          const usedX = countX * smallOrientation[0];
-          const usedY = countY * smallOrientation[1];
-          const usedZ = countZ * smallOrientation[2];
-
-          const wasteX = bigBoxDims[0] - usedX;
-          const wasteY = bigBoxDims[1] - usedY;
-          const wasteZ = bigBoxDims[2] - usedZ;
-
-          const utilizationRate = (total * smallBoxVolume / bigBoxVolume) * 100;
-          const optimalBigBox: [number, number, number] = [usedX, usedY, usedZ];
-
-          const orientationResult: OrientationResult = {
-            orientation: smallOrientation,
-            count: total,
-            countPerDimension: [countX, countY, countZ],
-            utilizationRate: parseFloat(utilizationRate.toFixed(2)),
-            wastedSpace: [
-              parseFloat(wasteX.toFixed(1)),
-              parseFloat(wasteY.toFixed(1)),
-              parseFloat(wasteZ.toFixed(1)),
-            ],
-            optimalBigBox,
-          };
-
-          allOrientations.push(orientationResult);
-
-          if (total > maxCount) {
-            maxCount = total;
-            
-            // 生成单一方向摆放数据
-            const placedBoxes: PlacedBox[] = [];
-            for (let x = 0; x < countX; x++) {
-              for (let y = 0; y < countY; y++) {
-                for (let z = 0; z < countZ; z++) {
-                  placedBoxes.push({
-                    position: [
-                      x * smallOrientation[0],
-                      y * smallOrientation[1],
-                      z * smallOrientation[2],
-                    ],
-                    orientation: smallOrientation,
-                    size: smallOrientation,
-                  });
-                }
-              }
-            }
-            
-            bestArrangement = {
-              maxCount: total,
-              orientation: smallOrientation,
-              countPerDimension: [countX, countY, countZ],
-              utilizationRate: parseFloat(utilizationRate.toFixed(2)),
-              wastedSpace: [
-                parseFloat(wasteX.toFixed(1)),
-                parseFloat(wasteY.toFixed(1)),
-                parseFloat(wasteZ.toFixed(1)),
-              ],
-              optimalBigBox,
-              allOrientations: allOrientations.sort((a, b) => b.count - a.count),
-              placedBoxes: placedBoxes,
-            };
-          }
-        }
-
-        if (bestArrangement) {
-          bestArrangement.allOrientations = allOrientations.sort((a, b) => b.count - a.count);
-        }
-
-        setResult(bestArrangement);
-        setMixedResult(null);
-        
-        // Track calculation event
-        if (bestArrangement) {
-          const actualWeight = (bigBoxWeight + bestArrangement.maxCount * smallBoxWeight) / 1000;
-          const volumetricWeight = (bigBox.length * bigBox.width * bigBox.height) / volumeWeightDivisor;
-          trackCalculation({
-            mode: 'single',
-            bigBoxVolume: bigBoxVolume,
-            smallBoxVolume: smallBoxVolume,
-            boxCount: bestArrangement.maxCount,
-            utilization: bestArrangement.utilizationRate,
-            actualWeight: actualWeight,
-            volumetricWeight: volumetricWeight,
-          });
-        }
-      }
-
-      setIsCalculating(false);
-    }, 600);
+  const calculate = async () => {
+    setShowErrors(true);
+    if (!input) return;
+    setCalculating(true);
+    setCalcError(null);
+    try {
+      const single = packSingle(input.inner, input.box);
+      const mixed = await runPackMixed(input.inner, input.box);
+      setCalc({ formKey, input, single, mixed });
+    } catch (err) {
+      setCalcError(String(err));
+    } finally {
+      setCalculating(false);
+    }
   };
 
   const applyOptimalSize = () => {
-    if (result) {
-      const originalVolume = bigBox.length * bigBox.width * bigBox.height;
-      const optimizedVolume = (result.optimalBigBox[0] + boxThickness * 2) * 
-                              (result.optimalBigBox[1] + boxThickness * 2) * 
-                              (result.optimalBigBox[2] + boxThickness * 2);
-      const utilizationImprovement = 100 - result.utilizationRate;
-      
-      // Track optimization applied
-      trackOptimizationApplied({
-        originalVolume: originalVolume,
-        optimizedVolume: optimizedVolume,
-        utilizationImprovement: utilizationImprovement,
-      });
-      
-      // 优化尺寸是内径，需要转换为外径
-      setBigBox({
-        length: result.optimalBigBox[0] + boxThickness * 2,
-        width: result.optimalBigBox[1] + boxThickness * 2,
-        height: result.optimalBigBox[2] + boxThickness * 2,
-      });
-    }
+    const best = calc?.single.best;
+    if (!calc || !best) return;
+    const t = calc.input.thicknessMm * 2;
+    setForm(f => ({
+      ...f,
+      bigLength: cm(best.used[0] + t),
+      bigWidth: cm(best.used[1] + t),
+      bigHeight: cm(best.used[2] + t),
+    }));
   };
 
-  // 计算重量（换算为kg）
-  const totalCount = mixedResult?.totalCount || result?.maxCount || 0;
-  const actualWeightG = bigBoxWeight + totalCount * smallBoxWeight;
-  const actualWeightKg = actualWeightG / 1000;
-  const volumeWeightKg = (bigBox.length * bigBox.width * bigBox.height) / volumeWeightDivisor;
+  const field = (
+    name: FieldName,
+    label: string,
+    unit: string,
+    hint?: string
+  ) => (
+    <NumberField
+      name={name}
+      label={label}
+      unit={unit}
+      value={form[name]}
+      error={showErrors || form[name].trim() !== "" ? errors[name] : undefined}
+      hint={hint}
+      onChange={v => setField(name, v)}
+    />
+  );
+
+  const innerHint = (i: number) =>
+    input ? `内径 ${cm(input.inner[i])} cm` : undefined;
 
   return (
     <div className="min-h-screen grid-bg">
-      {/* Hero Section */}
-      <section className="relative min-h-[60vh] flex items-center justify-center overflow-hidden">
-        <div
-          className="absolute inset-0 bg-cover bg-center opacity-40"
-          style={{ backgroundImage: "url(https://files.manuscdn.com/user_upload_by_module/session_file/310519663324726231/vdZWPKglVRkPrJtb.png)" }}
-        />
-        <div className="absolute inset-0 scan-line" />
-        <div className="relative z-10 text-center px-4">
-          <h1
-            className="text-6xl md:text-8xl font-black mb-6 neon-glow"
-            style={{ color: "#00e5ff" }}
-          >
-            装箱计算器
-          </h1>
-          <p className="text-xl md:text-2xl text-gray-400 font-medium tracking-wide">
-            PRECISION · TECHNOLOGY · EFFICIENCY
-          </p>
-        </div>
-      </section>
+      <header className="py-10 md:py-14 text-center border-b border-border">
+        <h1
+          className="text-4xl md:text-6xl font-black"
+          style={{ color: "#00e5ff" }}
+        >
+          装箱计算器
+        </h1>
+        <p className="mt-3 text-gray-400">
+          计算一个大箱子最多能装下多少个同尺寸的小箱子
+        </p>
+      </header>
 
-      {/* Calculator Section */}
-      <section className="container py-16 md:py-24">
-        <div className="max-w-5xl mx-auto">
-          {/* Algorithm Selection */}
-          <Card className="p-6 mb-8 bg-card border-2 border-primary/50">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-xl font-bold text-foreground mb-2">装箱算法模式</h3>
-                <p className="text-sm text-gray-400">
-                  {useMixedOrientation
-                    ? "混合方向模式：小箱子可以不同方向摆放，空间利用率更高"
-                    : "单一方向模式：所有小箱子保持同一方向，便于实际操作"}
-                </p>
-              </div>
-              <div className="flex items-center gap-3">
-                <Label htmlFor="algorithm-mode" className="text-base font-medium text-gray-300">
-                  {useMixedOrientation ? "混合方向" : "单一方向"}
-                </Label>
-                <Switch
-                  id="algorithm-mode"
-                  checked={useMixedOrientation}
-                  onCheckedChange={(checked) => {
-                    setUseMixedOrientation(checked);
-                    trackModeToggle(checked ? 'mixed' : 'single');
-                  }}
-                />
-              </div>
-            </div>
-          </Card>
-
-          {/* Box Thickness Setting */}
-          <Card className="p-6 mb-8 bg-card border-2 border-border">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-lg font-bold text-foreground mb-1">箱体厚度误差</h3>
-                <p className="text-sm text-gray-400">
-                  大箱子内外径误差，用于计算实际可用内部空间
-                </p>
-              </div>
-              <div className="flex items-center gap-3">
-                <Input
-                  type="number"
-                  value={boxThickness}
-                  onChange={(e) => {
-                    const newValue = parseFloat(e.target.value) || 0;
-                    setBoxThickness(newValue);
-                  }}
-                  onBlur={(e) => {
-                    const value = parseFloat(e.target.value) || 0;
-                    if (value !== boxThickness) {
-                      trackThicknessAdjustment(value);
-                    }
-                  }}
-                  onFocus={(e) => e.target.select()}
-                  className="w-24 text-lg h-12 bg-input border-border focus:border-primary text-center"
-                  step="0.1"
-                />
-                <span className="text-base text-gray-400">cm</span>
-              </div>
-            </div>
-          </Card>
-
-          {/* 体积重基准参数设置 */}
-          <Card className="p-6 bg-card border-2 border-border mb-8">
-            <div className="flex items-center justify-between">
-              <div className="flex-1">
-                <h3 className="text-xl font-bold text-foreground mb-2">体积重计算基准</h3>
-                <p className="text-sm text-gray-500">
-                  不同快递公司的体积重计算除数可能不同，常见值：6000（国内）、5000（国际）
-                </p>
-              </div>
-              <div className="flex items-center gap-3 ml-6">
-                <Input
-                  type="number"
-                  value={volumeWeightDivisor}
-                  onChange={(e) => {
-                    const newValue = parseFloat(e.target.value) || 6000;
-                    setVolumeWeightDivisor(newValue);
-                  }}
-                  onBlur={(e) => {
-                    const value = parseFloat(e.target.value) || 6000;
-                    if (value !== volumeWeightDivisor) {
-                      trackDivisorAdjustment(value);
-                    }
-                  }}
-                  onFocus={(e) => e.target.select()}
-                  className="w-28 text-lg h-12 bg-input border-border focus:border-primary text-center"
-                  step="100"
-                />
-              </div>
-            </div>
-          </Card>
-
-          <div className="grid md:grid-cols-2 gap-8 mb-12">
-            {/* Big Box Input */}
-            <Card className="p-8 bg-card border-2 border-primary/30 hover:border-primary transition-all scan-line">
-              <h2 className="text-3xl font-bold mb-6 text-primary">大箱子尺寸（外径）</h2>
-              <div className="space-y-6">
-                <div>
-                  <Label htmlFor="big-length" className="text-base font-medium text-gray-300">
-                    长度 (cm)
-                  </Label>
-                  <Input
-                    id="big-length"
-                    type="number"
-                    value={bigBox.length}
-                    onChange={(e) =>
-                      setBigBox({ ...bigBox, length: parseFloat(e.target.value) || 0 })
-                    }
-                    onFocus={(e) => e.target.select()}
-                    className="mt-2 text-2xl h-14 bg-input border-border focus:border-primary"
-                    step="0.1"
-                  />
-                  <p className="text-sm text-gray-500 mt-1">
-                    内径: {innerBigBox.length.toFixed(1)} cm
-                  </p>
-                </div>
-                <div>
-                  <Label htmlFor="big-width" className="text-base font-medium text-gray-300">
-                    宽度 (cm)
-                  </Label>
-                  <Input
-                    id="big-width"
-                    type="number"
-                    value={bigBox.width}
-                    onChange={(e) =>
-                      setBigBox({ ...bigBox, width: parseFloat(e.target.value) || 0 })
-                    }
-                    onFocus={(e) => e.target.select()}
-                    className="mt-2 text-2xl h-14 bg-input border-border focus:border-primary"
-                    step="0.1"
-                  />
-                  <p className="text-sm text-gray-500 mt-1">
-                    内径: {innerBigBox.width.toFixed(1)} cm
-                  </p>
-                </div>
-                <div>
-                  <Label htmlFor="big-height" className="text-base font-medium text-gray-300">
-                    高度 (cm)
-                  </Label>
-                  <Input
-                    id="big-height"
-                    type="number"
-                    value={bigBox.height}
-                    onChange={(e) =>
-                      setBigBox({ ...bigBox, height: parseFloat(e.target.value) || 0 })
-                    }
-                    onFocus={(e) => e.target.select()}
-                    className="mt-2 text-2xl h-14 bg-input border-border focus:border-primary"
-                    step="0.1"
-                  />
-                  <p className="text-sm text-gray-500 mt-1">
-                    内径: {innerBigBox.height.toFixed(1)} cm
-                  </p>
-                </div>
-                <div>
-                  <Label htmlFor="big-weight" className="text-base font-medium text-gray-300">
-                    单个大箱子重量 (g)
-                  </Label>
-                  <Input
-                    id="big-weight"
-                    type="number"
-                    value={bigBoxWeight}
-                    onChange={(e) => setBigBoxWeight(parseFloat(e.target.value) || 0)}
-                    onFocus={(e) => e.target.select()}
-                    className="mt-2 text-2xl h-14 bg-input border-border focus:border-primary"
-                    step="1"
-                  />
-                </div>
-              </div>
+      <main className="container py-10">
+        <div className="max-w-5xl mx-auto space-y-6">
+          {/* 参数设置 */}
+          <div className="grid md:grid-cols-2 gap-6">
+            <Card className="p-6 border-2 border-primary/30 gap-4">
+              <h2 className="text-xl font-bold text-primary">大箱子（外径）</h2>
+              {field("bigLength", "长", "cm", innerHint(0))}
+              {field("bigWidth", "宽", "cm", innerHint(1))}
+              {field("bigHeight", "高", "cm", innerHint(2))}
+              {field("bigWeight", "空箱重量", "g")}
             </Card>
-
-            {/* Small Box Input */}
-            <Card className="p-8 bg-card border-2 border-destructive/30 hover:border-destructive transition-all scan-line">
-              <h2 className="text-3xl font-bold mb-6 text-destructive">小箱子尺寸（外径）</h2>
-              <div className="space-y-6">
-                <div>
-                  <Label htmlFor="small-length" className="text-base font-medium text-gray-300">
-                    长度 (cm)
-                  </Label>
-                  <Input
-                    id="small-length"
-                    type="number"
-                    value={smallBox.length}
-                    onChange={(e) =>
-                      setSmallBox({ ...smallBox, length: parseFloat(e.target.value) || 0 })
-                    }
-                    onFocus={(e) => e.target.select()}
-                    className="mt-2 text-2xl h-14 bg-input border-border focus:border-destructive"
-                    step="0.1"
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="small-width" className="text-base font-medium text-gray-300">
-                    宽度 (cm)
-                  </Label>
-                  <Input
-                    id="small-width"
-                    type="number"
-                    value={smallBox.width}
-                    onChange={(e) =>
-                      setSmallBox({ ...smallBox, width: parseFloat(e.target.value) || 0 })
-                    }
-                    onFocus={(e) => e.target.select()}
-                    className="mt-2 text-2xl h-14 bg-input border-border focus:border-destructive"
-                    step="0.1"
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="small-height" className="text-base font-medium text-gray-300">
-                    高度 (cm)
-                  </Label>
-                  <Input
-                    id="small-height"
-                    type="number"
-                    value={smallBox.height}
-                    onChange={(e) =>
-                      setSmallBox({ ...smallBox, height: parseFloat(e.target.value) || 0 })
-                    }
-                    onFocus={(e) => e.target.select()}
-                    className="mt-2 text-2xl h-14 bg-input border-border focus:border-destructive"
-                    step="0.1"
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="small-weight" className="text-base font-medium text-gray-300">
-                    单个小箱子重量 (g)
-                  </Label>
-                  <Input
-                    id="small-weight"
-                    type="number"
-                    value={smallBoxWeight}
-                    onChange={(e) => setSmallBoxWeight(parseFloat(e.target.value) || 0)}
-                    onFocus={(e) => e.target.select()}
-                    className="mt-2 text-2xl h-14 bg-input border-border focus:border-destructive"
-                    step="1"
-                  />
-                </div>
-              </div>
+            <Card className="p-6 border-2 border-destructive/30 gap-4">
+              <h2 className="text-xl font-bold text-destructive">
+                小箱子（外径）
+              </h2>
+              {field("smallLength", "长", "cm")}
+              {field("smallWidth", "宽", "cm")}
+              {field("smallHeight", "高", "cm")}
+              {field("smallWeight", "单个重量", "g")}
             </Card>
           </div>
 
-          {/* Calculate Button */}
-          <div className="flex justify-center mb-16">
-            <Button
-              onClick={calculatePacking}
-              disabled={isCalculating}
-              className="px-12 py-8 text-2xl font-bold bg-primary text-primary-foreground hover:bg-primary/90 neon-glow transition-all"
-              size="lg"
-            >
-              {isCalculating ? "计算中..." : "开始计算"}
-            </Button>
-          </div>
-
-          {/* Mixed Orientation Results */}
-          {mixedResult && (
-            <>
-              <Card className="p-10 bg-card border-2 border-primary neon-glow animate-fade-in mb-8">
-                <div className="flex flex-col md:flex-row items-center gap-12">
-                  <div className="flex-shrink-0 w-full md:w-96 h-96">
-                    <PackingVisualization3D
-                      bigBoxSize={[
-                        bigBox.length - boxThickness * 2,
-                        bigBox.width - boxThickness * 2,
-                        bigBox.height - boxThickness * 2,
-                      ]}
-                      placedBoxes={mixedResult.placedBoxes}
-                      isMixedMode={true}
-                    />
-                  </div>
-
-                  <div className="flex-1 space-y-8">
-                    <div>
-                      <h3 className="text-2xl font-bold text-gray-400 mb-2">混合方向装箱结果</h3>
-                      <div className="flex items-baseline gap-4">
-                        <span className="text-8xl font-black number-display text-primary">
-                          {mixedResult.totalCount}
-                        </span>
-                        <span className="text-3xl text-gray-400 font-medium">个</span>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-6">
-                      <div>
-                        <p className="text-sm text-gray-500 mb-1 font-medium">空间利用率</p>
-                        <div className="flex items-baseline gap-2">
-                          <span className="text-4xl font-bold text-destructive number-display">
-                            {mixedResult.utilizationRate}%
-                          </span>
-                        </div>
-                      </div>
-                      <div>
-                        <p className="text-sm text-gray-500 mb-1 font-medium">使用方向数</p>
-                        <p className="text-4xl font-bold text-primary">
-                          {Object.keys(mixedResult.orientationStats).length}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </Card>
-
-              {/* Weight Information */}
-              <Card className="p-8 bg-card border-2 border-border animate-fade-in mb-8">
-                <h3 className="text-2xl font-bold text-foreground mb-6">重量信息</h3>
-                <div className="grid md:grid-cols-2 gap-8">
-                  <div className="p-6 rounded border-2 border-primary/30 bg-secondary/30">
-                    <p className="text-sm text-gray-500 mb-2">实际总重量</p>
-                    <div className="flex items-baseline gap-3">
-                      <span className="text-5xl font-bold text-primary number-display">
-                        {actualWeightKg.toFixed(2)}
-                      </span>
-                      <span className="text-xl text-gray-400">kg</span>
-                    </div>
-                    <p className="text-sm text-gray-500 mt-3">
-                      = 大箱子 {bigBoxWeight}g + 小箱子 {smallBoxWeight}g × {mixedResult.totalCount} = {actualWeightG}g
-                    </p>
-                  </div>
-                  <div className="p-6 rounded border-2 border-destructive/30 bg-secondary/30">
-                    <p className="text-sm text-gray-500 mb-2">体积重</p>
-                    <div className="flex items-baseline gap-3">
-                      <span className="text-5xl font-bold text-destructive number-display">
-                        {volumeWeightKg.toFixed(2)}
-                      </span>
-                      <span className="text-xl text-gray-400">kg</span>
-                    </div>
-                    <p className="text-sm text-gray-500 mt-3">
-                      = {bigBox.length} × {bigBox.width} × {bigBox.height} ÷ {volumeWeightDivisor}
-                    </p>
-                  </div>
-                </div>
-                <div className="mt-6 p-6 rounded border-2 border-border bg-accent/20">
-                  <p className="text-base text-gray-300">
-                    <span className="font-bold text-foreground">计费重量：</span>
-                    取实际重量和体积重中的较大值 ={" "}
-                    <span className="text-2xl font-bold text-primary">
-                      {Math.max(actualWeightKg, volumeWeightKg).toFixed(2)}
-                    </span>{" "}
-                    kg
-                  </p>
-                </div>
-              </Card>
-
-              {/* Orientation Statistics */}
-              <Card className="p-8 bg-card border-2 border-border animate-fade-in mb-8">
-                <h3 className="text-2xl font-bold text-foreground mb-6">各方向使用统计</h3>
-                <div className="space-y-4">
-                  {Object.entries(mixedResult.orientationStats)
-                    .sort(([, a], [, b]) => b - a)
-                    .map(([orientation, count], index) => (
-                      <div
-                        key={index}
-                        className="p-6 rounded border-2 border-primary/30 bg-secondary/30"
-                      >
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <p className="text-xs text-gray-500 mb-1">摆放方向</p>
-                            <p className="text-lg font-mono font-bold text-foreground">
-                              {orientation}
-                            </p>
-                          </div>
-                          <div className="text-right">
-                            <p className="text-xs text-gray-500 mb-1">使用数量</p>
-                            <p className="text-3xl font-bold text-primary">{count} 个</p>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                </div>
-              </Card>
-
-              {/* Detailed Placement (first 20) */}
-              <Card className="p-8 bg-card border-2 border-border animate-fade-in">
-                <h3 className="text-2xl font-bold text-foreground mb-6">
-                  详细摆放方案（前20个）
-                </h3>
-                <div className="space-y-3">
-                  {mixedResult.placedBoxes.slice(0, 20).map((box, index) => (
-                    <div
-                      key={index}
-                      className="p-4 rounded border border-border bg-secondary/20 font-mono text-sm"
-                    >
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <span className="text-gray-500">箱子 {index + 1}:</span>{" "}
-                          <span className="text-primary">
-                            位置 ({box.position[0].toFixed(1)}, {box.position[1].toFixed(1)},{" "}
-                            {box.position[2].toFixed(1)})
-                          </span>
-                        </div>
-                        <div>
-                          <span className="text-gray-500">方向:</span>{" "}
-                          <span className="text-destructive">
-                            {box.orientation[0]} × {box.orientation[1]} × {box.orientation[2]}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                  {mixedResult.placedBoxes.length > 20 && (
-                    <p className="text-center text-gray-500 pt-4">
-                      ... 还有 {mixedResult.placedBoxes.length - 20} 个箱子
-                    </p>
-                  )}
-                </div>
-              </Card>
-            </>
-          )}
-
-          {/* Single Orientation Results */}
-          {result && (
-            <>
-              <Card className="p-10 bg-card border-2 border-primary neon-glow animate-fade-in mb-8">
-                <div className="flex flex-col md:flex-row items-center gap-12">
-                  <div className="flex-shrink-0 w-full md:w-96 h-96">
-                    <PackingVisualization3D
-                      bigBoxSize={[
-                        bigBox.length - boxThickness * 2,
-                        bigBox.width - boxThickness * 2,
-                        bigBox.height - boxThickness * 2,
-                      ]}
-                      placedBoxes={result.placedBoxes}
-                      isMixedMode={false}
-                    />
-                  </div>
-
-                  <div className="flex-1 space-y-8">
-                    <div>
-                      <h3 className="text-2xl font-bold text-gray-400 mb-2">最优方案</h3>
-                      <div className="flex items-baseline gap-4">
-                        <span className="text-8xl font-black number-display text-primary">
-                          {result.maxCount}
-                        </span>
-                        <span className="text-3xl text-gray-400 font-medium">个</span>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-6">
-                      <div>
-                        <p className="text-sm text-gray-500 mb-1 font-medium">最佳摆放方向</p>
-                        <p className="text-xl font-mono text-foreground">
-                          {result.orientation[0]} × {result.orientation[1]} ×{" "}
-                          {result.orientation[2]}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-sm text-gray-500 mb-1 font-medium">各方向数量</p>
-                        <p className="text-xl font-mono text-foreground">
-                          {result.countPerDimension[0]} × {result.countPerDimension[1]} ×{" "}
-                          {result.countPerDimension[2]}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-sm text-gray-500 mb-1 font-medium">空间利用率</p>
-                        <div className="flex items-baseline gap-2">
-                          <span className="text-4xl font-bold text-destructive number-display">
-                            {result.utilizationRate}%
-                          </span>
-                        </div>
-                      </div>
-                      <div>
-                        <p className="text-sm text-gray-500 mb-1 font-medium">浪费空间</p>
-                        <p className="text-xl font-mono text-gray-400">
-                          {result.wastedSpace[0]} × {result.wastedSpace[1]} ×{" "}
-                          {result.wastedSpace[2]}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </Card>
-
-              {/* Weight Information */}
-              <Card className="p-8 bg-card border-2 border-border animate-fade-in mb-8">
-                <h3 className="text-2xl font-bold text-foreground mb-6">重量信息</h3>
-                <div className="grid md:grid-cols-2 gap-8">
-                  <div className="p-6 rounded border-2 border-primary/30 bg-secondary/30">
-                    <p className="text-sm text-gray-500 mb-2">实际总重量</p>
-                    <div className="flex items-baseline gap-3">
-                      <span className="text-5xl font-bold text-primary number-display">
-                        {actualWeightKg.toFixed(2)}
-                      </span>
-                      <span className="text-xl text-gray-400">kg</span>
-                    </div>
-                    <p className="text-sm text-gray-500 mt-3">
-                      = 大箱子 {bigBoxWeight}g + 小箱子 {smallBoxWeight}g × {result.maxCount} = {actualWeightG}g
-                    </p>
-                  </div>
-                  <div className="p-6 rounded border-2 border-destructive/30 bg-secondary/30">
-                    <p className="text-sm text-gray-500 mb-2">体积重</p>
-                    <div className="flex items-baseline gap-3">
-                      <span className="text-5xl font-bold text-destructive number-display">
-                        {volumeWeightKg.toFixed(2)}
-                      </span>
-                      <span className="text-xl text-gray-400">kg</span>
-                    </div>
-                    <p className="text-sm text-gray-500 mt-3">
-                      = {bigBox.length} × {bigBox.width} × {bigBox.height} ÷ {volumeWeightDivisor}
-                    </p>
-                  </div>
-                </div>
-                <div className="mt-6 p-6 rounded border-2 border-border bg-accent/20">
-                  <p className="text-base text-gray-300">
-                    <span className="font-bold text-foreground">计费重量：</span>
-                    取实际重量和体积重中的较大值 ={" "}
-                    <span className="text-2xl font-bold text-primary">
-                      {Math.max(actualWeightKg, volumeWeightKg).toFixed(2)}
-                    </span>{" "}
-                    kg
-                  </p>
-                </div>
-              </Card>
-
-              {result.utilizationRate < 100 && (
-                <Card className="p-8 bg-card border-2 border-destructive/50 animate-fade-in mb-8">
-                  <div className="flex items-start gap-6">
-                    <img
-                      src="https://files.manuscdn.com/user_upload_by_module/session_file/310519663324726231/pCBkiEJLvBCZWCYT.png"
-                      alt="优化建议"
-                      className="w-20 h-20 object-contain flex-shrink-0"
-                    />
-                    <div className="flex-1">
-                      <h3 className="text-2xl font-bold text-destructive mb-4">空间优化建议</h3>
-                      <p className="text-lg text-gray-300 mb-4 leading-relaxed">
-                        当前配置下，小箱子保持{" "}
-                        <span className="font-mono text-primary">
-                          {result.orientation[0]} × {result.orientation[1]} × {result.orientation[2]}
-                        </span>{" "}
-                        方向摆放时， 大箱子内径存在{" "}
-                        <span className="font-mono text-destructive">
-                          {result.wastedSpace[0]} × {result.wastedSpace[1]} × {result.wastedSpace[2]}{" "}
-                          cm
-                        </span>{" "}
-                        的浪费空间。
-                      </p>
-                      <div className="bg-secondary/50 p-6 rounded mb-4">
-                        <p className="text-base text-gray-400 mb-2">如果调整大箱子内径为：</p>
-                        <p className="text-3xl font-mono font-bold text-primary mb-3">
-                          {result.optimalBigBox[0]} × {result.optimalBigBox[1]} ×{" "}
-                          {result.optimalBigBox[2]} cm
-                        </p>
-                        <p className="text-base text-gray-400 mb-2">对应外径为：</p>
-                        <p className="text-2xl font-mono font-bold text-destructive mb-3">
-                          {(result.optimalBigBox[0] + boxThickness * 2).toFixed(1)} ×{" "}
-                          {(result.optimalBigBox[1] + boxThickness * 2).toFixed(1)} ×{" "}
-                          {(result.optimalBigBox[2] + boxThickness * 2).toFixed(1)} cm
-                        </p>
-                        <p className="text-base text-gray-300">
-                          可实现{" "}
-                          <span className="text-2xl font-bold text-destructive">100%</span>{" "}
-                          空间利用率，装载相同的 <span className="font-bold">{result.maxCount}</span>{" "}
-                          个小箱子
-                        </p>
-                      </div>
-                      <Button
-                        onClick={applyOptimalSize}
-                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90 neon-glow-pink"
-                      >
-                        应用优化尺寸
-                      </Button>
-                    </div>
-                  </div>
-                </Card>
+          <Card className="p-6 border-2 border-border gap-4">
+            <div className="grid md:grid-cols-2 gap-6">
+              {field("thickness", "大箱子壁厚", "cm", "内径 = 外径 − 2 × 壁厚")}
+              {field(
+                "divisor",
+                "体积重除数",
+                "",
+                "常见值：6000（国内）、5000（国际）"
               )}
+            </div>
+            <div className="flex items-center justify-between gap-4 pt-2 border-t border-border">
+              <div>
+                <Label htmlFor="mode" className="text-base font-bold">
+                  {mixedMode ? "混合方向" : "单一方向"}
+                </Label>
+                <p className="text-sm text-gray-400 mt-1">
+                  {mixedMode
+                    ? "小箱子可以不同方向摆放，能装得更多"
+                    : "所有小箱子保持同一方向，装箱操作更简单"}
+                </p>
+              </div>
+              <Switch
+                id="mode"
+                checked={mixedMode}
+                onCheckedChange={setMixedMode}
+              />
+            </div>
+          </Card>
 
-              <Card className="p-8 bg-card border-2 border-border animate-fade-in">
-                <h3 className="text-2xl font-bold text-foreground mb-6">所有摆放方向对比</h3>
-                <div className="space-y-4">
-                  {result.allOrientations.map((item, index) => (
-                    <div
-                      key={index}
-                      className={`p-6 rounded border-2 transition-all ${
-                        item.orientation[0] === result.orientation[0] &&
-                        item.orientation[1] === result.orientation[1] &&
-                        item.orientation[2] === result.orientation[2]
-                          ? "border-primary bg-primary/5"
-                          : "border-border bg-secondary/30"
-                      }`}
-                    >
-                      <div className="grid md:grid-cols-5 gap-4 items-center">
-                        <div>
-                          <p className="text-xs text-gray-500 mb-1">摆放方向</p>
-                          <p className="text-lg font-mono font-bold text-foreground">
-                            {item.orientation[0]} × {item.orientation[1]} × {item.orientation[2]}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-gray-500 mb-1">装载数量</p>
-                          <p className="text-2xl font-bold text-primary">{item.count} 个</p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-gray-500 mb-1">各方向数量</p>
-                          <p className="text-sm font-mono text-gray-300">
-                            {item.countPerDimension[0]} × {item.countPerDimension[1]} ×{" "}
-                            {item.countPerDimension[2]}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-gray-500 mb-1">利用率</p>
-                          <p className="text-xl font-bold text-destructive">
-                            {item.utilizationRate}%
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-gray-500 mb-1">优化内径</p>
-                          <p className="text-sm font-mono text-gray-400">
-                            {item.optimalBigBox[0]} × {item.optimalBigBox[1]} ×{" "}
-                            {item.optimalBigBox[2]}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
+          <div className="flex flex-col items-center gap-3 py-4">
+            <Button
+              onClick={calculate}
+              disabled={calculating}
+              size="lg"
+              className="px-12 py-7 text-xl font-bold neon-glow"
+            >
+              {calculating ? "计算中…" : "开始计算"}
+            </Button>
+            {showErrors && !input && (
+              <p className="text-destructive">请先修正上面标红的输入项</p>
+            )}
+            {calcError && (
+              <p className="text-destructive">计算出错：{calcError}</p>
+            )}
+          </div>
+
+          {calc && (
+            <div>
+              {stale && (
+                <div className="mb-4 p-4 border-2 border-yellow-500 bg-[#2a2408] text-yellow-300 text-center sticky top-0 z-10">
+                  参数已修改，下面是上一次的结果，请点击「开始计算」更新
                 </div>
-              </Card>
-            </>
+              )}
+              <div className={stale ? "opacity-40" : undefined}>
+                <Results
+                  calc={calc}
+                  mixedMode={mixedMode}
+                  onApplyOptimal={applyOptimalSize}
+                />
+              </div>
+            </div>
           )}
         </div>
-      </section>
+      </main>
 
-      {/* Footer */}
-      <footer className="border-t border-border py-8 mt-16">
-        <div className="container text-center text-gray-500 text-sm font-medium">
-          <p>© 2026 装箱计算器 · 精准计算 · 高效装箱</p>
-        </div>
+      <footer className="border-t border-border py-6 mt-10 text-center text-gray-500 text-sm">
+        装箱计算器 · 尺寸精度 0.1cm · 所有计算均在本机完成
       </footer>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+function NumberField(props: {
+  name: string;
+  label: string;
+  unit: string;
+  value: string;
+  error?: string;
+  hint?: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div>
+      <Label htmlFor={props.name} className="text-sm text-gray-300">
+        {props.label}
+        {props.unit && <span className="text-gray-500">（{props.unit}）</span>}
+      </Label>
+      <Input
+        id={props.name}
+        inputMode="decimal"
+        autoComplete="off"
+        value={props.value}
+        aria-invalid={props.error ? true : undefined}
+        onChange={e => props.onChange(e.target.value)}
+        onFocus={e => e.target.select()}
+        className="mt-1.5 h-11 text-lg font-mono"
+      />
+      {props.error ? (
+        <p className="text-sm text-destructive mt-1">{props.error}</p>
+      ) : (
+        props.hint && <p className="text-sm text-gray-500 mt-1">{props.hint}</p>
+      )}
+    </div>
+  );
+}
+
+function Results({
+  calc,
+  mixedMode,
+  onApplyOptimal,
+}: {
+  calc: Calculation;
+  mixedMode: boolean;
+  onApplyOptimal: () => void;
+}) {
+  const { input, single, mixed } = calc;
+  const singleCount = single.best?.count ?? 0;
+  const count = mixedMode ? mixed.count : singleCount;
+
+  const blocks: Block[] = useMemo(
+    () => (mixedMode ? mixed.blocks : singleToBlocks(single.best)),
+    [mixedMode, mixed, single]
+  );
+  const stats = useMemo(() => orientationStats(blocks), [blocks]);
+  const placements = useMemo(
+    () => expandBlocks(blocks, MAX_RENDERED_BOXES),
+    [blocks]
+  );
+  const colorIndexOf = useCallback(
+    (size: Vec3) => {
+      const key = size.join(",");
+      return Math.max(
+        0,
+        stats.findIndex(s => s.boxSize.join(",") === key)
+      );
+    },
+    [stats]
+  );
+
+  const boxVolume = input.box[0] * input.box[1] * input.box[2];
+  const innerVolume = input.inner[0] * input.inner[1] * input.inner[2];
+  const utilization = ((count * boxVolume) / innerVolume) * 100;
+
+  if (count === 0) {
+    return (
+      <Card className="p-8 border-2 border-destructive text-center">
+        <p className="text-2xl font-bold text-destructive">一个都放不下</p>
+        <p className="text-gray-400 mt-2">
+          小箱子 {dims(input.box)} cm 无论怎么翻转都放不进内径{" "}
+          {dims(input.inner)} cm 的大箱子
+        </p>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* 主结果 */}
+      <Card className="p-6 md:p-8 border-2 border-primary gap-6">
+        <div className="flex flex-col md:flex-row gap-8">
+          <div className="w-full md:w-[420px] h-[360px] md:h-[420px] flex-shrink-0">
+            <PackingVisualization3D
+              container={input.inner}
+              placements={placements}
+              colorIndexOf={colorIndexOf}
+            />
+          </div>
+          <div className="flex-1 space-y-5">
+            <div>
+              <p className="text-gray-400">
+                {mixedMode ? "混合方向" : "单一方向"} · 最多可装
+              </p>
+              <p className="flex items-baseline gap-3">
+                <span className="text-7xl font-black number-display text-primary">
+                  {count.toLocaleString()}
+                </span>
+                <span className="text-2xl text-gray-400">个</span>
+              </p>
+            </div>
+            <OptimalityBadge calc={calc} mixedMode={mixedMode} />
+            <div className="grid grid-cols-2 gap-4">
+              <Stat label="空间利用率" value={`${utilization.toFixed(1)}%`} />
+              <Stat
+                label="大箱子内径"
+                value={`${dims(input.inner)} cm`}
+                small
+              />
+            </div>
+            {placements.length < count && (
+              <p className="text-sm text-gray-500">
+                3D 图只显示了前 {placements.length.toLocaleString()} 个箱子
+              </p>
+            )}
+          </div>
+        </div>
+      </Card>
+
+      <WeightCard input={input} count={count} />
+
+      {/* 朝向统计 */}
+      <Card className="p-6 border-2 border-border gap-4">
+        <h3 className="text-xl font-bold">摆放方向</h3>
+        <p className="text-sm text-gray-500 -mt-2">
+          尺寸顺序为「沿大箱子长 × 宽 × 高方向」，颜色与 3D 图一致
+        </p>
+        <div className="space-y-2">
+          {stats.map((s, i) => (
+            <div
+              key={s.boxSize.join(",")}
+              className="flex items-center justify-between p-3 border border-border bg-secondary/30"
+            >
+              <div className="flex items-center gap-3">
+                <span
+                  className="inline-block w-4 h-4"
+                  style={{
+                    background:
+                      ORIENTATION_COLORS[i % ORIENTATION_COLORS.length],
+                  }}
+                />
+                <span className="font-mono">{dims(s.boxSize)} cm</span>
+              </div>
+              <span className="text-xl font-bold text-primary">
+                {s.count.toLocaleString()} 个
+              </span>
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      {/* 分区明细 */}
+      <Card className="p-6 border-2 border-border gap-4">
+        <h3 className="text-xl font-bold">装箱方案明细</h3>
+        <p className="text-sm text-gray-500 -mt-2">
+          起点为距大箱子内腔角落的距离（长, 宽,
+          高），每个区域内的箱子朝向相同、整齐排列
+        </p>
+        <div className="space-y-2 font-mono text-sm">
+          {blocks.slice(0, MAX_LISTED_BLOCKS).map((b, i) => (
+            <div
+              key={i}
+              className="grid md:grid-cols-[auto_1fr_1fr_auto] gap-x-6 gap-y-1 p-3 border border-border bg-secondary/20"
+            >
+              <span className="text-gray-500">区域 {i + 1}</span>
+              <span>
+                起点 ({cm(b.origin[0])}, {cm(b.origin[1])}, {cm(b.origin[2])})
+              </span>
+              <span className="text-destructive">朝向 {dims(b.boxSize)}</span>
+              <span className="text-primary">
+                {b.grid.join(" × ")} = {blockCount(b).toLocaleString()} 个
+              </span>
+            </div>
+          ))}
+          {blocks.length > MAX_LISTED_BLOCKS && (
+            <p className="text-center text-gray-500 pt-2">
+              … 还有 {blocks.length - MAX_LISTED_BLOCKS} 个区域
+            </p>
+          )}
+        </div>
+      </Card>
+
+      {!mixedMode && single.best && (
+        <SingleModeDetails calc={calc} onApplyOptimal={onApplyOptimal} />
+      )}
+    </div>
+  );
+}
+
+function OptimalityBadge({
+  calc,
+  mixedMode,
+}: {
+  calc: Calculation;
+  mixedMode: boolean;
+}) {
+  const { single, mixed } = calc;
+  const singleCount = single.best?.count ?? 0;
+
+  if (!mixedMode) {
+    return (
+      <div className="space-y-2">
+        <Badge tone="ok">✓ 所有箱子同一方向时，这就是最大值</Badge>
+        {mixed.count > singleCount && (
+          <p className="text-sm text-yellow-300">
+            提示：允许混合方向可装 {mixed.count.toLocaleString()} 个（多{" "}
+            {(mixed.count - singleCount).toLocaleString()} 个）
+          </p>
+        )}
+      </div>
+    );
+  }
+  if (mixed.provenOptimal) {
+    return <Badge tone="ok">✓ 已证明是最大值，不可能装得更多</Badge>;
+  }
+  return (
+    <div className="space-y-1">
+      <Badge tone="warn">当前找到的最好方案</Badge>
+      <p className="text-sm text-gray-400">
+        理论上限为 {mixed.upperBound.toLocaleString()}{" "}
+        个（按体积估算，实际往往达不到）， 真实最大值在{" "}
+        {mixed.count.toLocaleString()} ~ {mixed.upperBound.toLocaleString()}{" "}
+        个之间。
+      </p>
+    </div>
+  );
+}
+
+function Badge({
+  tone,
+  children,
+}: {
+  tone: "ok" | "warn";
+  children: ReactNode;
+}) {
+  const cls =
+    tone === "ok"
+      ? "border-green-500/60 bg-green-500/10 text-green-300"
+      : "border-yellow-500/60 bg-yellow-500/10 text-yellow-300";
+  return (
+    <div className={`inline-block px-3 py-1.5 border font-medium ${cls}`}>
+      {children}
+    </div>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  small,
+}: {
+  label: string;
+  value: string;
+  small?: boolean;
+}) {
+  return (
+    <div>
+      <p className="text-sm text-gray-500">{label}</p>
+      <p
+        className={
+          small
+            ? "text-lg font-mono"
+            : "text-3xl font-bold text-destructive number-display"
+        }
+      >
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function WeightCard({ input, count }: { input: ParsedInput; count: number }) {
+  const actualG = input.bigWeightG + count * input.smallWeightG;
+  const actualKg = actualG / 1000;
+  const outerCm3 = (input.outer[0] * input.outer[1] * input.outer[2]) / 1000;
+  const volumeKg = outerCm3 / input.divisor;
+  const round = (v: number) => Math.round(v * 100) / 100;
+
+  return (
+    <Card className="p-6 border-2 border-border gap-4">
+      <h3 className="text-xl font-bold">重量</h3>
+      <div className="grid md:grid-cols-2 gap-4">
+        <div className="p-4 border-2 border-primary/30 bg-secondary/30">
+          <p className="text-sm text-gray-500">实际总重量</p>
+          <p className="text-4xl font-bold text-primary number-display">
+            {actualKg.toFixed(2)}{" "}
+            <span className="text-lg text-gray-400">kg</span>
+          </p>
+          <p className="text-sm text-gray-500 mt-2">
+            = 空箱 {input.bigWeightG}g + {input.smallWeightG}g ×{" "}
+            {count.toLocaleString()} = {round(actualG).toLocaleString()}g
+          </p>
+        </div>
+        <div className="p-4 border-2 border-destructive/30 bg-secondary/30">
+          <p className="text-sm text-gray-500">体积重（按外径）</p>
+          <p className="text-4xl font-bold text-destructive number-display">
+            {volumeKg.toFixed(2)}{" "}
+            <span className="text-lg text-gray-400">kg</span>
+          </p>
+          <p className="text-sm text-gray-500 mt-2">
+            = {dims(input.outer)} ÷ {input.divisor}
+          </p>
+        </div>
+      </div>
+      <p className="p-4 border border-border bg-accent/10">
+        <span className="font-bold">计费重量</span>（实际重量与体积重取大）={" "}
+        <span className="text-2xl font-bold text-primary">
+          {Math.max(actualKg, volumeKg).toFixed(2)}
+        </span>{" "}
+        kg
+      </p>
+    </Card>
+  );
+}
+
+function SingleModeDetails({
+  calc,
+  onApplyOptimal,
+}: {
+  calc: Calculation;
+  onApplyOptimal: () => void;
+}) {
+  const { input, single } = calc;
+  const best = single.best!;
+  const t = input.thicknessMm * 2;
+  const hasWaste = best.waste.some(w => w > 0);
+  const optimalOuter: Vec3 = [
+    best.used[0] + t,
+    best.used[1] + t,
+    best.used[2] + t,
+  ];
+
+  return (
+    <>
+      {hasWaste && (
+        <Card className="p-6 border-2 border-destructive/50 gap-3">
+          <h3 className="text-xl font-bold text-destructive">缩小大箱子建议</h3>
+          <p className="text-gray-300">
+            按{" "}
+            <span className="font-mono text-primary">{dims(best.boxSize)}</span>{" "}
+            方向摆放时，长/宽/高方向分别空出{" "}
+            <span className="font-mono text-destructive">
+              {dims(best.waste)} cm
+            </span>
+            。
+          </p>
+          <p className="text-gray-300">
+            把大箱子外径改为{" "}
+            <span className="font-mono font-bold text-primary text-xl">
+              {dims(optimalOuter)} cm
+            </span>
+            （内径 {dims(best.used)} cm），同一方向下仍能装{" "}
+            {best.count.toLocaleString()} 个，且没有空隙。
+          </p>
+          <div>
+            <Button onClick={onApplyOptimal} variant="destructive">
+              使用这个尺寸
+            </Button>
+          </div>
+        </Card>
+      )}
+
+      <Card className="p-6 border-2 border-border gap-4">
+        <h3 className="text-xl font-bold">所有方向对比</h3>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm font-mono">
+            <thead className="text-gray-500 text-left">
+              <tr>
+                <th className="py-2 pr-4 font-normal">朝向（长×宽×高）</th>
+                <th className="py-2 pr-4 font-normal">排列</th>
+                <th className="py-2 pr-4 font-normal">数量</th>
+                <th className="py-2 font-normal">剩余空间</th>
+              </tr>
+            </thead>
+            <tbody>
+              {single.options.map(o => (
+                <tr
+                  key={o.boxSize.join(",")}
+                  className={
+                    o === best
+                      ? "text-primary font-bold"
+                      : "text-gray-300 border-t border-border"
+                  }
+                >
+                  <td className="py-2 pr-4">{dims(o.boxSize)}</td>
+                  <td className="py-2 pr-4">{o.grid.join(" × ")}</td>
+                  <td className="py-2 pr-4">{o.count.toLocaleString()}</td>
+                  <td className="py-2">{dims(o.waste)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+    </>
   );
 }
